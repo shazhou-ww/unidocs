@@ -61,6 +61,7 @@ describe("Portal Google authorization-code flow", () => {
     expect(target.searchParams.get("client_id")).toBe(config.clientId);
     expect(target.searchParams.get("redirect_uri")).toBe(config.redirectUri);
     expect(target.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(target.searchParams.get("prompt")).toBe("select_account");
     expect(target.searchParams.get("nonce")).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(target.searchParams.has("max_age")).toBe(false);
     expect(target.searchParams.has("claims")).toBe(false);

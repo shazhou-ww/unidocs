@@ -117,6 +117,7 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
         redirect_uri: config.redirectUri,
         response_type: "code",
         scope: "openid email",
+        prompt: "select_account",
         state,
         nonce,
         code_challenge: await oauth.calculatePKCECodeChallenge(verifier),

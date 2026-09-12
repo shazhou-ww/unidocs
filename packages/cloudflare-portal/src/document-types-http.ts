@@ -5,13 +5,15 @@ import { adminApiContract } from "@unidocs/protocol-admin-portal";
 import { AdminOperationError, boundedBytes, createDocumentTypeService, parseStrictJson, type AdminContext, type DocumentTypeRepository } from "@unidocs/portal-service";
 
 export function createDocumentTypesHttp(repository: DocumentTypeRepository) {
-  const contract = { list: adminApiContract.documentTypes.list, get: adminApiContract.documentTypes.get, create: adminApiContract.documentTypes.create };
+  const contract = { list: adminApiContract.documentTypes.list, get: adminApiContract.documentTypes.get, create: adminApiContract.documentTypes.create, update: adminApiContract.documentTypes.update };
   const implementation = implement(contract).$context<{ admin: AdminContext; requestId: string }>();
   const service = createDocumentTypeService(repository);
   const router = {
     list: implementation.list.handler(({ input, context }) => service.list(context.admin, input.query ?? {})),
     get: implementation.get.handler(({ input, context }) => service.get(context.admin, input.params.documentType)),
     create: implementation.create.handler(({ input, context }) => service.create(context.admin, input.body, input.headers["idempotency-key"], context.requestId)),
+    update: implementation.update.handler(({ input, context }) => service.update(context.admin, input.params.documentType, input.body,
+      input.headers["idempotency-key"], input.headers["if-match"], context.requestId)),
   };
   return async (request: Request, admin: AdminContext, requestId: string): Promise<Response> => {
     const url = new URL(request.url);
@@ -22,11 +24,14 @@ export function createDocumentTypesHttp(repository: DocumentTypeRepository) {
       seen.add(name);
     });
     if (invalidQuery) return Response.json({ error: { code: "invalid_request", message: "The query is invalid", requestId } }, { status: 400 });
+    if (request.method === "PATCH" && !request.headers.has("if-match")) {
+      return Response.json({ error: { code: "precondition_required", message: "The If-Match precondition is required", requestId } }, { status: 428 });
+    }
     const handler = new OpenAPIHandler(router, {
       plugins: request.method === "GET" ? [new experimental_ZodSmartCoercionPlugin()] : [],
       interceptors: [async ({ next }) => {
         try { return await next(); } catch (error) {
-          if (error instanceof AdminOperationError) throw new ORPCError(error.code.toUpperCase(), { status: { invalid_request: 400, not_found: 404, idempotency_conflict: 409, forbidden: 403 }[error.code], message: error.message, data: { requestId } });
+          if (error instanceof AdminOperationError) throw new ORPCError(error.code.toUpperCase(), { status: { invalid_request: 400, not_found: 404, idempotency_conflict: 409, precondition_failed: 412, forbidden: 403 }[error.code], message: error.message, data: { requestId } });
           throw error;
         }
       }],
@@ -37,7 +42,7 @@ export function createDocumentTypesHttp(repository: DocumentTypeRepository) {
       },
     });
     let boundedRequest = request;
-    if (request.method === "POST") {
+    if (request.method === "POST" || request.method === "PATCH") {
       if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json" || request.headers.has("content-encoding")) {
         return Response.json({ error: { code: "invalid_request", message: "A JSON request body is required", requestId } }, { status: 400 });
       }
@@ -47,7 +52,8 @@ export function createDocumentTypesHttp(repository: DocumentTypeRepository) {
         let length = 0;
         for await (const chunk of boundedBytes(request.body, content.length)) { content.set(chunk, length); length += chunk.byteLength; }
         const body = parseStrictJson(content.subarray(0, length));
-        if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).some(field => field !== "internalName")) throw new Error();
+        const allowedFields = request.method === "POST" ? ["internalName"] : ["internalName", "typeCardBundleId", "viewBundleId", "builtinOperatorId", "enabled", "reason"];
+        if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).some(field => !allowedFields.includes(field))) throw new Error();
         boundedRequest = new Request(request.url, { method: request.method, headers: request.headers, body: content.slice(0, length) });
       } catch {
         return Response.json({ error: { code: "invalid_request", message: "Invalid or oversized JSON request", requestId } }, { status: 400 });

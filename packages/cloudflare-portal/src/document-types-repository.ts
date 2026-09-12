@@ -1,9 +1,9 @@
 import type { D1Database } from "@cloudflare/workers-types";
-import { AdminOperationError, schemaHash, type AdminContext, type DocumentTypeCreateCommand, type DocumentTypeRepository } from "@unidocs/portal-service";
-import { DocumentTypeRegistrationSchema, DocumentTypeSchema, ListDocumentTypesQuerySchema, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
+import { AdminOperationError, schemaHash, type AdminContext, type DocumentTypeCreateCommand, type DocumentTypeRepository, type DocumentTypeUpdateCommand } from "@unidocs/portal-service";
+import { DocumentTypeRegistrationSchema, DocumentTypeSchema, ListDocumentTypesQuerySchema, TypeCardBundleRecordSchema, type DocumentTypeRegistration, type ListDocumentTypesQuery, type ListDocumentTypesResponse } from "@unidocs/protocol-admin-portal";
 
 export class D1DocumentTypeRepository implements DocumentTypeRepository {
-  constructor(private readonly database: D1Database, private readonly now: () => number = () => Math.floor(Date.now() / 1000)) {}
+  constructor(private readonly database: D1Database, private readonly now: () => number = () => Math.floor(Date.now() / 1000)) { }
 
   private authorityStatement(context: AdminContext) {
     return this.database.prepare(`SELECT member_id FROM portal_administrators WHERE member_id = ? AND issuer = ? AND subject = ? AND active = 1
@@ -41,7 +41,8 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
         this.database.prepare("DELETE FROM portal_mutation_guard"),
         this.database.prepare("INSERT INTO portal_idempotency_receipts VALUES (?, 'createDocumentType', ?, ?, ?, ?)")
           .bind(context.memberId, key, fingerprint, JSON.stringify(response), registration.updatedAt),
-        this.database.prepare("INSERT INTO portal_document_types VALUES (?, ?, ?, ?, ?)")
+        this.database.prepare(`INSERT INTO portal_document_types
+          (document_type, internal_name, enabled, registration_json, created_at) VALUES (?, ?, ?, ?, ?)`)
           .bind(registration.documentType, registration.internalName, registration.enabled ? 1 : 0, JSON.stringify(registration), registration.updatedAt),
         this.database.prepare(`INSERT INTO portal_admin_audit
           (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
@@ -54,6 +55,70 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
       if (concurrent) return concurrent;
       throw error;
     }
+  }
+
+  async update(command: DocumentTypeUpdateCommand) {
+    const { context, key, fingerprint, expectedEtag, registration, audits } = command;
+    await this.authorize(context);
+    const replay = async () => {
+      await this.authorize(context);
+      const receipt = await this.database.prepare("SELECT fingerprint, response_json FROM portal_idempotency_receipts WHERE actor_id = ? AND operation = 'updateDocumentType' AND key = ?")
+        .bind(context.memberId, key).first<{ fingerprint: string; response_json: string }>();
+      if (!receipt) return null;
+      if (receipt.fingerprint !== fingerprint) throw new AdminOperationError("idempotency_conflict");
+      return JSON.parse(receipt.response_json) as { documentType: string; etag: string };
+    };
+    const previous = await replay();
+    if (previous) return previous;
+    const response = { documentType: registration.documentType, etag: registration.etag };
+    const auditStatements = audits.map(audit => this.database.prepare(`INSERT INTO portal_admin_audit
+      (audit_event_id, actor_id, action, resource_type, resource_id, occurred_at, request_id, document_type, reason, details_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(audit.auditEventId, context.memberId, audit.action, audit.resourceType, audit.resourceId, Math.floor(Date.parse(audit.occurredAt) / 1000), audit.requestId,
+        audit.documentType, audit.reason, audit.details === undefined ? null : JSON.stringify(audit.details)));
+    try {
+      await this.database.batch([
+        this.database.prepare(`INSERT INTO portal_mutation_guard SELECT CASE WHEN EXISTS
+          (SELECT 1 FROM portal_administrators WHERE member_id = ? AND issuer = ? AND subject = ? AND active = 1
+            AND (? = 'bearer' OR EXISTS (SELECT 1 FROM portal_sessions AS session JOIN portal_session_families AS family ON session.family_id = family.family_id
+              WHERE session.session_hash = ? AND family.member_id = portal_administrators.member_id AND family.revoked_at IS NULL AND session.expires_at > ?))) THEN 1 ELSE 0 END`)
+          .bind(context.memberId, context.identity.issuer, context.identity.subject, context.transport, context.sessionHash ?? null, this.now()),
+        this.database.prepare("DELETE FROM portal_mutation_guard"),
+        this.database.prepare("INSERT INTO portal_idempotency_receipts VALUES (?, 'updateDocumentType', ?, ?, ?, ?)")
+          .bind(context.memberId, key, fingerprint, JSON.stringify(response), registration.updatedAt),
+        this.database.prepare(`UPDATE portal_document_types SET internal_name = ?, enabled = ?, registration_json = ?
+          WHERE document_type = ? AND json_extract(registration_json, '$.etag') = ?`)
+          .bind(registration.internalName, registration.enabled ? 1 : 0, JSON.stringify(registration), registration.documentType, expectedEtag),
+        this.database.prepare("INSERT INTO portal_mutation_guard SELECT changes()"),
+        this.database.prepare("DELETE FROM portal_mutation_guard"),
+        ...auditStatements,
+      ]);
+      return response;
+    } catch (error) {
+      const concurrent = await replay();
+      if (concurrent) return concurrent;
+      const current = await this.get(context, registration.documentType);
+      if (!current) throw new AdminOperationError("not_found");
+      if (current.etag !== expectedEtag) throw new AdminOperationError("precondition_failed");
+      throw error;
+    }
+  }
+
+  async resolveTypeCardBundle(context: AdminContext, documentType: string, bundleId: string) {
+    await this.authorize(context);
+    const row = await this.database.prepare(`SELECT record_json FROM portal_type_card_bundles
+      WHERE type_card_bundle_id = ? AND document_type = ?`).bind(bundleId, documentType).first<{ record_json: string }>();
+    return row ? TypeCardBundleRecordSchema.parse(JSON.parse(row.record_json)) : null;
+  }
+
+  async resolveViewBundle(context: AdminContext, _documentType: string, _bundleId: string) {
+    await this.authorize(context);
+    return null;
+  }
+
+  async resolveOperator(context: AdminContext, _documentType: string, _operatorId: string) {
+    await this.authorize(context);
+    return null;
   }
 
   async get(context: AdminContext, documentType: string): Promise<DocumentTypeRegistration | null> {

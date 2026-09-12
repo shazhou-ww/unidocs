@@ -66,13 +66,12 @@ From the repository root:
 pnpm --filter @unidocs/protocol-admin-portal docs:generate
 ```
 
-This writes one artifact:
-
-- `packages/protocol-admin-portal/openapi/admin-v1.openapi.json` for tooling, client generation, and compatibility checks;
+This writes `packages/protocol-admin-portal/openapi/admin-v1.openapi.json` for
+tooling, client generation, compatibility checks, and documentation renderers.
+Presentation and HTML generation belong to the shared documentation portal,
+not this protocol package.
 
 The generator is an internal build tool and is not exported from the package.
-Markdown guides, navigation grouping, and Scalar rendering are owned by
-`@unidocs/docs-webui` and published at `https://docs.shazhou.work/unidocs`.
 The committed JSON document has its own package entrypoint:
 
 ```ts
