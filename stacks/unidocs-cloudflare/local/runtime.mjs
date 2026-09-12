@@ -16,6 +16,7 @@ import {
 } from "miniflare";
 import {
   buildWorkers,
+  bundleExternals,
   bundleTargets,
   ADMIN_PORT,
   MOCK_OIDC_PORT,
@@ -25,12 +26,18 @@ import {
   SERVICE_WORKER,
   resolvePorts,
 } from "./doc-types.mjs";
+import { serviceWorkers } from "./services.mjs";
+import { splitSqlStatements } from "./sql-statements.mjs";
 import { openDevLog } from "./dev-log.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
 import { docSessionObjectName } from "../../../packages/doctype-server-common/src/session-object-name.ts";
 import { migrateControlSchema } from "../../../unicas-packages/service-cloudflare/src/control-schema.ts";
 
 export { DOC_TYPES, parseDocTypes } from "./doc-types.mjs";
+// Re-exported for the callers that reach for it through the runtime; the rule
+// itself lives in doc-types.mjs, where it can derive the nodejs_compat entry
+// set from the registry instead of restating it.
+export { bundleExternals } from "./doc-types.mjs";
 
 export const DEFAULT_PORTS = resolvePorts(Object.keys(DOC_TYPES));
 
@@ -40,7 +47,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 // own esbuild bundlers so this table is kept in one place.
 const WORKSPACE_ALIASES = resolveWorkspaceAliases(ROOT);
 
-async function bundleWorker(entry, outfile) {
+export async function bundleWorker(entry, outfile) {
   await mkdir(dirname(outfile), { recursive: true });
   await esbuild.build({
     absWorkingDir: ROOT,
@@ -56,9 +63,9 @@ async function bundleWorker(entry, outfile) {
     // packages/cloudflare-psd/wrangler.toml 的 [[rules]] type = "Data"。
     // 漏了这一项是构建期报错（esbuild 不认识 .ttf 扩展名），不是运行时静默失效。
     loader: { ".ttf": "binary", ".otf": "binary" },
-    ...(entry.replaceAll("\\", "/").includes("unicas-packages/service-cloudflare/")
-      ? { external: ["cloudflare:workers", "node:*"] }
-      : {}),
+    // See bundleExternals: `cloudflare:workers` for every entry, `node:*`
+    // only for the entries that declare `nodejs_compat`.
+    external: bundleExternals(entry),
     logOverride: { "empty-import-meta": "silent" },
   });
 }
@@ -147,6 +154,41 @@ async function migrateSnapshotsDb(mf) {
     await db.exec(sql);
     await db.prepare(
       "INSERT INTO _unidocs_gateway_migrations (name, applied_at) VALUES (?, ?)",
+    ).bind(file, Date.now()).run();
+  }
+}
+
+/**
+ * Apply a service's committed D1 migrations. Same ledger shape as
+ * `migrateSnapshotsDb`, minus its bootstrap-inference branch: the gateway has
+ * local databases that predate its ledger and must have their generation
+ * inferred, while a service database here has no such history — a fresh one
+ * simply applies every file.
+ *
+ * Unlike `migrateSnapshotsDb` it does **not** hand the file to `db.exec()`.
+ * D1's `exec` splits on newlines and runs each line as a whole statement,
+ * which only works because every gateway migration happens to be written
+ * one-statement-per-line; a service's migrations are authored for
+ * `wrangler d1 migrations apply` and are multi-line `CREATE TABLE (...)`
+ * blocks, which `exec` rejects with `incomplete input`. `splitSqlStatements`
+ * does the splitting properly (strings, comments, trigger bodies) so service
+ * migrations stay readable — see sql-statements.mjs.
+ */
+async function migrateServiceDb(mf, component, root) {
+  const db = await mf.getD1Database(component.d1Binding, component.worker);
+  const directory = join(root, component.migrations);
+  const files = (await readdir(directory)).filter(file => file.endsWith(".sql")).sort();
+  await db.exec("CREATE TABLE IF NOT EXISTS _unidocs_service_migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);");
+  const appliedResult = await db.prepare("SELECT name FROM _unidocs_service_migrations ORDER BY name").all();
+  const applied = new Set((appliedResult.results ?? []).map(row => row.name));
+  for (const file of files) {
+    if (applied.has(file)) continue;
+    const sql = await readFile(join(directory, file), "utf8");
+    for (const statement of splitSqlStatements(sql, file)) {
+      await db.prepare(statement).run();
+    }
+    await db.prepare(
+      "INSERT INTO _unidocs_service_migrations (name, applied_at) VALUES (?, ?)",
     ).bind(file, Date.now()).run();
   }
 }
@@ -378,6 +420,7 @@ function printStructuredLog({ level, message }) {
 export async function startLocalRuntime({
   host = "127.0.0.1",
   docTypes = Object.keys(DOC_TYPES),
+  services = [],
   ports: portOverrides = {},
   persistPath,
   casFault = false,
@@ -409,7 +452,7 @@ export async function startLocalRuntime({
   if (gatewayOAuth && gatewayOAuth.issuer !== resolvedStackFixture.issuer) {
     throw new Error("gatewayOAuth.issuer must exactly equal stackFixture.issuer");
   }
-  const ports = resolvePorts(docTypes, portOverrides);
+  const ports = resolvePorts(docTypes, portOverrides, services);
   if (!casOrigin) {
     ports.admin = portOverrides.admin ?? ADMIN_PORT;
     ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
@@ -429,7 +472,7 @@ export async function startLocalRuntime({
   const bundleDir = join(ROOT, ".wrangler", "local-bundles", String(ports.gateway ?? "cas-admin"));
 
   await Promise.all(
-    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || !casOrigin }).map(({ entry, outfile }) =>
+    bundleTargets(docTypes, { casMiddlewareOnly, casMiddleware: casMiddleware || !casOrigin, services }).map(({ entry, outfile }) =>
       bundleWorker(join(ROOT, bundleEntryOverrides[entry] ?? entry), join(bundleDir, outfile)),
     ),
   );
@@ -453,6 +496,14 @@ export async function startLocalRuntime({
       devVars: devVars ? await readDevVars(join(ROOT, devVars)) : {},
       processEnv: processDocBindings,
     });
+  }
+  // Same for the service workers: the portal's Google client lives in its own
+  // .dev.vars rather than the process environment, so configuring it does not
+  // also move the CAS admin BFF off its local mock provider. Never log these.
+  const serviceDevVars = {};
+  for (const component of serviceWorkers(services)) {
+    if (!component.devVars) continue;
+    serviceDevVars[component.name] = await readDevVars(join(ROOT, component.devVars));
   }
   const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 
@@ -492,10 +543,13 @@ export async function startLocalRuntime({
           googleOidcClientId: process.env.GOOGLE_OIDC_CLIENT_ID,
           googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
           googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
+          portalBootstrapEmail: process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL ?? "",
           casMiddlewareOnly,
           casMiddleware: casMiddleware || !casOrigin,
           casOrigin,
           gatewayOAuth,
+          services,
+          serviceDevVars,
         }),
       }),
     );
@@ -508,6 +562,9 @@ export async function startLocalRuntime({
         const gatewayDb = await mf.getD1Database("GATEWAY_DB", GATEWAY_WORKER);
         await seedGatewayOAuthMemberships(gatewayDb, gatewayOAuth);
       }
+    }
+    for (const component of serviceWorkers(services)) {
+      if (component.migrations) await migrateServiceDb(mf, component, ROOT);
     }
     if (!casOrigin) {
       const controlDb = await mf.getD1Database("CAS_CONTROL_DB", SERVICE_WORKER);
