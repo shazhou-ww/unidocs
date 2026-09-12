@@ -314,6 +314,36 @@ test("validates the Markdown Operator and restores its short-lived result", asyn
   vi.unstubAllGlobals();
 });
 
+test("restores document-type change history, opens details, and paginates", async () => {
+  window.history.replaceState({}, "", "/admin/document-types/dt-markdown?tab=changes");
+  const registration = { documentType: "dt-markdown", internalName: "Markdown", enabled: false, latestDocumentContract: null, typeCardBundle: null, viewBundle: null, builtinOperator: null, etag: '"sha256-registration"', updatedAt: "2026-09-12T00:00:00.000Z" };
+  const first = { auditEventId: "change-2", actorId: "admin", action: "operator.created", resourceType: "operator", resourceId: "op_one", documentType: "dt-markdown", occurredAt: "2026-09-12T01:00:00.000Z", requestId: "request-2", reason: null, details: { declaredOperatorId: "markdown-primary" } };
+  const second = { ...first, auditEventId: "change-1", action: "document_type.registered", resourceType: "document_type", resourceId: "dt-markdown", occurredAt: "2026-09-12T00:00:00.000Z", requestId: "request-1", details: undefined };
+  const fetchMock = vi.fn<typeof fetch>(async input => {
+    const url = String(input);
+    if (url.endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    if (url.endsWith("/document-types/dt-markdown")) return Response.json(registration);
+    if (url.includes("/administrators")) return Response.json({ items: [{ adminId: "admin", email: "lee.scott@example.com", bound: true, addedBy: "bootstrap", addedAt: first.occurredAt, etag: '"sha256-admin"', isSelf: true }], nextCursor: null });
+    if (url.includes("/audit-events") && url.includes("cursor=next")) return Response.json({ items: [second], nextCursor: null });
+    if (url.includes("/audit-events")) return Response.json({ items: [first], nextCursor: "next" });
+    return Response.json({ items: [], nextCursor: null });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  expect(await screen.findByRole("tab", { name: "变更记录" })).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("documentType=dt-markdown"), expect.anything()));
+  const change = await screen.findByRole("button", { name: /创建算子/ });
+  expect(change).toHaveTextContent("lee.scott@example.com");
+  fireEvent.click(change);
+  expect(screen.getByText("request-2")).toBeInTheDocument();
+  expect(screen.getByText(/markdown-primary/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
+  expect(await screen.findByRole("button", { name: /创建文档类型/ })).toBeInTheDocument();
+  expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("cursor=next"), expect.anything());
+  expect(window.location.pathname + window.location.search).toBe("/admin/document-types/dt-markdown?tab=changes");
+  vi.unstubAllGlobals();
+});
+
 test("renders a useful access denial only after the session probe fails", async () => {
   window.history.replaceState({}, "", "/admin/access-denied?code=forbidden&requestId=request-1");
   let rejectSession!: (reason: Error) => void;

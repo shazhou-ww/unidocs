@@ -1863,6 +1863,108 @@ tbody tr.selected-row {
   align-self: center;
 }
 
+.change-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.change-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(150px, auto) 16px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.change-row:hover,
+.change-row.active {
+  border-color: #aebcb3;
+  background: #f5f8f5;
+}
+
+.change-marker {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid #dfe4da;
+  border-radius: 6px;
+  background: #f0f3eb;
+  color: #59705a;
+}
+
+.change-summary,
+.change-meta {
+  min-width: 0;
+}
+
+.change-summary strong,
+.change-summary small,
+.change-summary>span,
+.change-meta time,
+.change-meta small {
+  display: block;
+}
+
+.change-summary small,
+.change-meta,
+.change-summary>span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.change-summary>span {
+  margin-top: 4px;
+}
+
+.change-meta {
+  text-align: right;
+}
+
+.change-meta small {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.change-detail {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.change-detail dl div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eceeea;
+}
+
+.change-detail dt {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.change-detail dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.change-detail dd small,
+.change-detail dd code {
+  display: block;
+  margin-top: 3px;
+}
+
 .button-row,
 .aside-actions {
   display: flex;
@@ -1883,5 +1985,19 @@ tbody tr.selected-row {
   .candidate-actions {
     grid-column: 1 / -1;
     justify-content: flex-end;
+  }
+
+  .change-row {
+    grid-template-columns: 34px minmax(0, 1fr) 16px;
+  }
+
+  .change-meta {
+    grid-column: 2 / -1;
+    text-align: left;
+  }
+
+  .change-detail dl div {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 }

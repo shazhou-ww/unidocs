@@ -260,6 +260,10 @@ function AdminApp() {
   const [auditCursor, setAuditCursor] = useState<string | null>(null);
   const [auditAction, setAuditAction] = useState<AdminAuditEvent["action"] | "all">("all");
   const [auditResource, setAuditResource] = useState<AdminAuditEvent["resourceType"] | "all">("all");
+  const [changeEvents, setChangeEvents] = useState<readonly AdminAuditEvent[]>([]);
+  const [changeCursor, setChangeCursor] = useState<string | null>(null);
+  const [selectedChange, setSelectedChange] = useState<AdminAuditEvent | null>(null);
+  const [changesLoading, setChangesLoading] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
 
   async function loadTypes(nextQuery = query, nextEnabled = enabled) {
@@ -308,6 +312,7 @@ function AdminApp() {
       if (tab === "cards") await loadTypeCardBundles(documentType);
       if (tab === "bundles") await loadViewBundles(documentType);
       if (tab === "operators") await Promise.all([restoreOperatorValidation(documentType), loadOperators(documentType)]);
+      if (tab === "changes") await loadChanges(documentType);
     }
     catch (caught) { setError(errorMessage(caught)); }
     finally { setDetailLoading(false); }
@@ -412,6 +417,7 @@ function AdminApp() {
     if (tab === "cards" && typeCardBundles.length === 0) void loadTypeCardBundles(selected.documentType);
     if (tab === "bundles" && viewBundles.length === 0) void loadViewBundles(selected.documentType);
     if (tab === "operators") { void restoreOperatorValidation(selected.documentType); void loadOperators(selected.documentType); }
+    if (tab === "changes" && changeEvents.length === 0) void loadChanges(selected.documentType);
   }
 
   async function uploadTypeCardBundle(event: FormEvent) {
@@ -579,6 +585,22 @@ function AdminApp() {
       setError(errorMessage(caught));
     } finally {
       setAuditLoading(false);
+    }
+  }
+
+  async function loadChanges(documentType: string, cursor: string | null = null) {
+    setChangesLoading(true);
+    setError(null);
+    try {
+      const page = await client.listAuditEvents({ documentType, cursor: cursor ?? undefined, limit: 25 });
+      startTransition(() => setChangeEvents(current => cursor ? [...current, ...page.items] : page.items));
+      setChangeCursor(page.nextCursor);
+      if (!cursor) setSelectedChange(null);
+      if (members.length === 0) void loadMembers();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setChangesLoading(false);
     }
   }
 
@@ -753,7 +775,13 @@ function AdminApp() {
                   {operatorCursor && <div className="load-more"><button className="secondary-button" type="button" onClick={() => void loadOperators(selected.documentType, operatorCursor)}>加载更多</button></div>}
                   {selectedOperator && <div className="bundle-detail"><div className="bundle-detail-heading"><div><span>PERSISTENT CANDIDATE</span><h3>{selectedOperator.name}</h3><p>{selectedOperator.description || "没有管理员备注"}</p></div><span className={`status ${selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "enabled" : "draft"}`}>{selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "当前绑定" : "候选项"}</span></div><dl><div><dt>Operator ID</dt><dd><code>{selectedOperator.operatorId}</code></dd></div><div><dt>Declared ID</dt><dd><code>{selectedOperator.descriptor.declaredOperatorId}</code></dd></div><div><dt>Base URL</dt><dd><a href={selectedOperator.baseUrl} target="_blank" rel="noreferrer">{selectedOperator.baseUrl}</a></dd></div><div><dt>支持 revisions</dt><dd>{selectedOperator.descriptor.supportedDocumentContracts[selected.documentType]?.map(idx => `revision ${idx}`).join(" · ")}</dd></div></dl><div className="operator-validation-form"><label><span>候选项名称</span><input aria-label="编辑处理服务名称" value={operatorName} onChange={event => setOperatorName(event.target.value)} /></label><label><span>管理员备注</span><textarea className="metadata-textarea" value={operatorDescription} onChange={event => setOperatorDescription(event.target.value)} /></label><div className="modal-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => void updateOperatorInfo()}><Pencil size={15} />保存信息</button><button className="primary-button" type="button" disabled={saving} onClick={() => void updateRegistration({ builtinOperatorId: selected.builtinOperator?.operatorId === selectedOperator.operatorId ? null : selectedOperator.operatorId }, selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "Clear builtin Operator" : "Select builtin Operator")}>{selected.builtinOperator?.operatorId === selectedOperator.operatorId ? "解除绑定" : "绑定为当前服务"}</button></div></div></div>}
                 </section>}
-                {!["config", "contracts", "cards", "bundles", "operators"].includes(activeTypeTab) && <div className="empty-state"><CircleDashed size={28} /><strong>尚未配置</strong><span>变更记录请前往审计页面查看。</span></div>}
+                {activeTypeTab === "changes" && <section className="config-section"><div className="section-heading"><div><h3>变更记录</h3><p>当前文档类型的配置、候选资源与验证事件，按时间倒序排列。</p></div><button className="icon-button bordered" type="button" onClick={() => void loadChanges(selected.documentType)} title="刷新变更记录" aria-label="刷新变更记录"><RefreshCw className={changesLoading ? "spin" : ""} size={17} /></button></div>
+                  <div className="change-history">{changeEvents.map(event => <button className={`change-row ${selectedChange?.auditEventId === event.auditEventId ? "active" : ""}`} type="button" key={event.auditEventId} onClick={() => setSelectedChange(event)}><span className="change-marker"><ScrollText size={16} /></span><span className="change-summary"><strong>{auditActionLabel(event.action)}</strong><small>{resourceLabels[event.resourceType]} · {event.resourceId}</small><span>{event.reason || "无变更备注"}</span></span><span className="change-meta"><time dateTime={event.occurredAt}>{new Date(event.occurredAt).toLocaleString("zh-CN")}</time><small>{actorIdentity(event.actorId)?.email ?? event.actorId}</small></span><ChevronRight size={16} /></button>)}</div>
+                  {!changesLoading && changeEvents.length === 0 && <div className="empty-state compact-empty"><ScrollText size={26} /><strong>还没有变更记录</strong><span>此文档类型的配置操作会在这里留下不可变审计事件。</span></div>}
+                  {changesLoading && changeEvents.length === 0 && <div className="empty-state compact-empty" role="status"><LoaderCircle className="spin" size={24} /><strong>正在读取变更记录</strong></div>}
+                  {changeCursor && <div className="load-more"><button className="secondary-button" type="button" disabled={changesLoading} onClick={() => void loadChanges(selected.documentType, changeCursor)}>{changesLoading ? <LoaderCircle className="spin" size={15} /> : null}加载更多</button></div>}
+                  {selectedChange && <div className="change-detail"><div className="bundle-detail-heading"><div><span>AUDIT EVENT</span><h3>{auditActionLabel(selectedChange.action)}</h3><p>{new Date(selectedChange.occurredAt).toLocaleString("zh-CN")}</p></div><button className="icon-button bordered" type="button" onClick={() => setSelectedChange(null)} aria-label="关闭变更详情"><X size={16} /></button></div><dl><div><dt>Event ID</dt><dd><code>{selectedChange.auditEventId}</code></dd></div><div><dt>Request ID</dt><dd><code>{selectedChange.requestId}</code></dd></div><div><dt>操作者</dt><dd>{actorIdentity(selectedChange.actorId) ? <><strong>{actorIdentity(selectedChange.actorId)!.name}</strong><small>{actorIdentity(selectedChange.actorId)!.email}</small><code>{selectedChange.actorId}</code></> : <code>{selectedChange.actorId}</code>}</dd></div><div><dt>资源</dt><dd><code>{selectedChange.resourceType}/{selectedChange.resourceId}</code></dd></div><div><dt>原因</dt><dd>{selectedChange.reason ?? "—"}</dd></div></dl>{selectedChange.details !== undefined && <div className="audit-details-json"><strong>结构化详情</strong><pre>{JSON.stringify(selectedChange.details, null, 2)}</pre></div>}</div>}
+                </section>}
               </div>
               <aside className="config-aside"><h3>启用准备度</h3><dl><div><dt>文档契约</dt><dd>{selected.latestDocumentContract ? `revision ${selected.latestDocumentContract.documentContractIdx}` : "缺失"}</dd></div><div><dt>类型卡片包</dt><dd>{selected.typeCardBundle?.name ?? "缺失"}</dd></div><div><dt>视图包</dt><dd>{selected.viewBundle?.name ?? "缺失"}</dd></div><div><dt>处理服务</dt><dd>{selected.builtinOperator?.name ?? "缺失"}</dd></div></dl></aside>
             </div>
