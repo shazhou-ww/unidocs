@@ -1779,6 +1779,11 @@ tbody tr.selected-row {
   background: var(--soft);
 }
 
+.section-heading>button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .operator-history {
   display: grid;
   gap: 10px;
@@ -1870,6 +1875,10 @@ tbody tr.selected-row {
 }
 
 @media (max-width: 720px) {
+  .operator-add-panel {
+    padding-bottom: 72px;
+  }
+
   .operator-candidate {
     grid-template-columns: 38px minmax(0, 1fr);
   }
