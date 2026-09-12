@@ -28,8 +28,13 @@ body {
 
 button,
 input,
-select {
-  .bundle-history {
+select,
+textarea {
+  font: inherit;
+  letter-spacing: 0;
+}
+
+.bundle-history {
     display: grid;
     gap: 8px;
   }
@@ -206,10 +211,6 @@ select {
   .bundle-detail code {
     font-size: 8px;
   }
-
-  font: inherit;
-  letter-spacing: 0;
-}
 
 .modal .metadata-textarea {
   min-height: 86px;
@@ -1724,13 +1725,136 @@ tbody tr.selected-row {
 
 .operator-validation-form {
   display: grid;
-  gap: 12px;
+  gap: 17px;
   margin-top: 16px;
 }
 
 .operator-validation-form label {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  color: #4e554d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.operator-validation-form input,
+.operator-validation-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0 11px;
+  border: 1px solid #cfd4cd;
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  outline: 0;
+  font: 12px/1.45 "Microsoft YaHei UI", "Noto Sans SC", sans-serif;
+}
+
+.operator-validation-form input {
+  height: 40px;
+}
+
+.operator-validation-form textarea {
+  min-height: 84px;
+  padding-block: 10px;
+  resize: vertical;
+}
+
+.operator-validation-form input:focus,
+.operator-validation-form textarea:focus {
+  border-color: #768f80;
+  box-shadow: 0 0 0 3px #dce5df;
+}
+
+.operator-validation-form input[readonly] {
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.operator-add-panel {
+  margin: 18px 0 20px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--soft);
+}
+
+.operator-history {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.operator-candidate {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.operator-candidate.active {
+  border-color: #a9b9ae;
+  background: #f5f8f5;
+}
+
+.operator-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #dfe4da;
+  border-radius: 6px;
+  background: #f0f3eb;
+  color: #59705a;
+}
+
+.operator-summary,
+.operator-summary code {
+  min-width: 0;
+}
+
+.candidate-title,
+.candidate-actions,
+.candidate-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.candidate-title {
+  flex-wrap: wrap;
+}
+
+.operator-summary p {
+  margin: 5px 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.operator-summary code {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.candidate-meta {
+  flex-wrap: wrap;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.candidate-meta span {
+  overflow-wrap: anywhere;
+}
+
+.candidate-actions {
+  align-self: center;
 }
 
 .button-row,
@@ -1743,4 +1867,15 @@ tbody tr.selected-row {
 
 .aside-actions {
   margin-top: 16px;
+}
+
+@media (max-width: 720px) {
+  .operator-candidate {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .candidate-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
 }
