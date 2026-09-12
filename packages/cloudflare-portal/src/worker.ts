@@ -21,10 +21,16 @@ import { D1OperatorValidationRepository } from "./operator-validations-repositor
 import { createMarkdownOperatorValidationTarget } from "./operator-validation-target.js";
 import { createOperatorsHttp } from "./operators-http.js";
 import { D1OperatorRepository } from "./operators-repository.js";
+import { dispatchAdminMcp } from "./mcp/dispatcher.js";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
+      const mcpResponse = await dispatchAdminMcp(request, {
+        enabled: env.MCP_ENABLED === "true",
+        publicOrigin: env.MCP_PUBLIC_ORIGIN,
+      });
+      if (mcpResponse) return mcpResponse;
       if (new URL(request.url).origin === env.BUNDLE_ORIGIN) return serveBundleObject(request, env.BUNDLES, env.PORTAL_ORIGIN);
       const config = portalGoogleConfigFromGateway({
         GATEWAY_OIDC_CLIENT_ID: env.GATEWAY_OIDC_CLIENT_ID,

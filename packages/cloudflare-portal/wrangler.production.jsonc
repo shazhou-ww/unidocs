@@ -29,6 +29,8 @@
     ]
   },
   "vars": {
+    "MCP_ENABLED": "false",
+    "MCP_PUBLIC_ORIGIN": "https://unidocs.shazhou.work",
     "PORTAL_ORIGIN": "https://unidocs.shazhou.work",
     "BUNDLE_ORIGIN": "https://bundles.shazhou.work",
     "GATEWAY_OIDC_ISSUER": "https://accounts.google.com",

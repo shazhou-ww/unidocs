@@ -1,6 +1,6 @@
 # UniDocs Admin Portal MCP 实现计划
 
-状态：实施中（Phase 0 工具契约与原子审计归因完成，OAuth fixtures 待实现，尚未开放 remote MCP）
+状态：实施中（工具契约、审计、D1 成员校验、code/refresh 单次消费与 MCP OIDC 核心已验证；加密 transaction、consent、tools 与生产接入待实现）
 
 日期：2026-09-12  
 范围：为已上线的 26-operation Admin Portal 增加 OAuth 2.1 保护的 remote MCP；不改变 Tenant/Document 数据面，不把 UniCAS 作为运行时依赖。
@@ -287,6 +287,8 @@ packages/cloudflare-portal/src/mcp/
 
 packages/cloudflare-portal/migrations/
   0008_mcp_audit_attribution.sql
+  0009_mcp_refresh_consumption.sql
+  0010_mcp_code_consumption.sql
 
 packages/admin-portal-webui/src/
   mcp-configuration-dialog.tsx
@@ -324,15 +326,25 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 
 ## 11. 分阶段实施
 
-当前 checkpoint（2026-09-12）：提交前两批工具契约、输入与成员校验、D1 原子审计归因及测试。已通过 571 项相关包测试、48 项 D1/workerd 集成与全仓 typecheck；完整 `test:local` 仍有下述失败。下一步实现 exact-path dispatcher 与 cookie 隔离，再接 OAuth provider 和 read-only tools。此 checkpoint 不代表可生产发布。
+当前 checkpoint（2026-09-12）：`d7f4dcf` 已提交前两批工具契约、输入与成员校验、D1 原子审计归因及测试。本次 checkpoint 纳入第三至第六批 dispatcher、OAuth provider 工厂、D1 code/refresh 单次消费、真实成员查询和 MCP OIDC 核心，按用户要求提交并与 remote main 合并。最近验证：22 项 MCP 集成、171 项 Portal 包测试、2 项 WebUI BFF 回归及包级 typecheck 通过。下一步接加密 transaction 存储、consent 和 read-only tools；完整 `test:local` 的历史失败仍需合并后核实。此 checkpoint 不代表可生产发布，MCP 保持关闭。
 
 ### Phase 0：contract 与安全 fixtures
 
 - [x] 固定 27-tool catalog、scope map、annotations 和 Zod input snapshots；
-- [ ] 固定 OAuth metadata、DCR、PKCE S256、state/cookie/CSRF、token rotation/revoke fixtures；
-- [ ] 固定 member removal 后 access/refresh token 行为；
+- [x] 固定 OAuth metadata、DCR、PKCE S256 fixtures；
+- [x] 固定 refresh 单次消费、并发、故障与 revoke fixtures；
+- [x] 固定已消费 authorization code 重放撤销 grant 的 fixtures；
+- [x] 固定模拟成员移除后 access/refresh token 拒绝的 provider fixtures；
+- [x] 固定精确路径、Cookie 隔离与同源 consent POST 门禁 fixtures；
+- [x] 固定 MCP Google state/nonce、签名与 claims 核心 fixtures（transaction port 使用内存测试实现）；
+- [ ] 接入独立 AES-GCM transaction 存储与持久化单次消费；
+- [ ] 固定一次性 consent CSRF fixtures；
+- [x] 固定 authorization code 并发单次消费；
+- [x] 接入真实 D1 成员查询并验证 OAuth 成员移除/重新邀请；
 - [x] 固定 caller attribution migration 与每个 mutation audit；
-- [ ] 固定 base64 ZIP 边界、取消和日志脱敏 fixtures。
+- [x] 固定 base64 ZIP 边界、取消与 audit 脱敏 fixtures；
+- [ ] 固定 Worker 日志脱敏 fixtures；
+- [ ] 验证生产跨地域 KV 撤销可见性。
 
 2026-09-12 首批实现进度：
 
@@ -356,13 +368,59 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 - 完整 `pnpm test:local` 已尝试但未通过：日志出现 Gateway 测试打包无法解析 `cloudflare:workers`、workspace alias 缺项、compute CAS redirect 断言、PSD 字体脚本断言及 esbuild 异常输出。本批未修改这些实现，不将其混入 MCP 审计改动；该合并门禁仍阻塞。CAS 文档检查通过，`git diff --check` 无错误。
 - 部署本批 repository 代码前必须先应用 migration 0008；回退 Worker 代码不需要删除新增 D1 列或历史审计数据。
 
+2026-09-12 第三批实现进度（纳入本次 checkpoint）：
+
+- `packages/cloudflare-portal/src/mcp/dispatcher.ts` 已接入 Worker，先于 Admin BFF/Google 配置及 bundle 分派检查 8 个精确路径。`MCP_ENABLED` 仅字符串 `true` 开启，默认 404；尚无 provider 时返回安全 503，不回落 Admin session。
+- 非浏览器 MCP/OAuth 路径剥离全部 Cookie；authorize/callback 仅保留两个独立 OAuth cookie 并拒绝重复 cookie；剥离 WebUI CSRF header。响应禁止写入 Admin session cookie，强制 no-store/no-referrer/nosniff，浏览器页面禁止脚本和 frame 嵌入。
+- consent POST 要求同源 Origin；提供 Origin 的请求暂只接受 MCP public origin，Google callback GET 允许跨站导航。额外 allowed hostnames 尚未配置接入。
+- JSON-RPC body 上限为 `11,184,812 + 65,536` bytes，OAuth body 上限为 `65,536` bytes；先验证 Content-Length，再按实际流量计数，超限取消上游流。尚未接入 OAuth 参数、PKCE、nonce/state/CSRF 或 token 验证。
+- 两份 Wrangler 配置新增默认关闭的 MCP 变量并重新生成 Env；未新增生产 route、KV、secret，未部署。
+- 本批验证：Cloudflare Portal 全部 158 项测试、包级 source/test typecheck、1 项真实 workerd dispatcher 集成通过。完整仓库 `test:local` 的既有阻塞仍按第二批记录，未宣称已解决。
+
+2026-09-12 第四批实现进度（纳入本次 checkpoint）：
+
+- Cloudflare adapter 锁定 `@cloudflare/workers-oauth-provider@0.10.3`，新增 `src/mcp/oauth.ts` provider 工厂，复用 exact-path dispatcher。工厂尚未连接生产 Worker，未创建 KV、secret 或生产 route；真实授权保持不可用。
+- 实现 canonical resource metadata、authorization-server metadata、public-only DCR、S256/authorization-code 限制、有效 token scope 写入独立 access-token props、成员与 canary 重查、15 分钟 access TTL 和 8 小时绝对 grant 截止时间。
+- 授权参数拒绝错误 resource、未知 scope、重复参数；token/revoke 仅接受有界 form POST，分离两类操作。独立 `/oauth/admin-mcp/revoke` 映射到库内部共用的 token endpoint，metadata 公布独立 revoke URL。
+- 库将 authorization code 的 KV 记录保留 10 分钟；adapter 在 code exchange callback 额外执行 5 分钟截止检查。已消费 code 再次使用会触发库撤销整个 grant，测试单独固定该行为。
+- 库 JSDoc 声称 refresh callback 的 `refreshTokenTTL` 会被忽略，但安装版本源码实际拒绝该字段；adapter 仅在首次 code exchange 设置 refresh TTL，refresh 不延长 grant 截止时间。
+- **第四批发现的问题（第五批已补 D1 消费门禁）：** 实测库默认在成功 refresh 后允许同一旧 token 再次兑换。最终一致 KV 的 check-then-put 不能保证原子消费；用户已确认用 D1 保持严格单次轮换，不接受库默认的重试窗口。
+- 动态 client TTL 当前使用库的注册后 90 天过期机制，尚未实现“90 天无活动后清理”。真实跨地域 KV 撤销可见性与并发 code/refresh 消费尚未验证，不能用本地 workerd 结果声称生产立即失效。
+- workerd fixture 的 authorize handler 仅模拟已完成登录/consent，用真实 provider 验证 code/token 机制，不是生产登录实现；Google nonce/state/verified claims、独立加密 transaction、一次性 CSRF、D1 绑定查询 adapter 和 MCP SDK tools 仍待接入。
+- 验证通过：158 项 Cloudflare Portal 包测试、包级 source/test typecheck、10 项 workerd MCP/OAuth 集成（含 refresh 重放行为特征测试）。未重跑有已知失败的全仓 `test:local`，未进行真人 OAuth 验收或部署。
+
+2026-09-12 第五批实现进度（D1 refresh 原子消费，纳入本次 checkpoint）：
+
+- 新增 `0009_mcp_refresh_consumption.sql` 和 `src/mcp/refresh-consumption.ts`。消费表仅存 SHA-256 token 哈希、消费时间、grant 绝对到期时间；哈希主键配合单条 `INSERT ... ON CONFLICT(token_hash) DO NOTHING` 保证同一个 refresh token 只有一个消费赢家，不保存 token 明文或响应。
+- 每次 HTTP 请求创建独立 provider，refresh token 仅在本次请求闭包中传入已验证的 token-exchange callback。库完成 token/client/resource 验证、adapter 完成成员与 scope/期限检查后才写 D1，错误 client、非法 token 和已移除成员不会消耗有效 token。
+- 同一 token 重复或并发消费返回 `invalid_grant`；D1 不可用返回脱敏的 `temporarily_unavailable`/503，不绕过消费门禁。不同请求不共享可变 token 状态。
+- D1 与 OAuth KV 不组成一个事务。D1 消费成功后不删除记录、不恢复 token；KV 后续写入失败、D1 提交回执丢失或客户端丢失成功响应时，旧 token 仍不可重用，客户端可能需要重新授权。已明确失败关闭，不自动重试兑换。
+- 消费记录至少保留到 grant 的绝对截止时间；已建立 expiry 索引，但尚未增加自动清理任务。不得提前删除有效 grant 的消费记录；也不得因为 KV revoke 或错误重试删除消费记录。过期 grant 仍由 adapter 的 8 小时检查拒绝。
+- 验证通过：16 项真实 workerd MCP/OAuth/D1 集成，覆盖 8 路并发恰好一个成功、后继 token 可用、错误 client 不消耗、D1 写失败、提交结果不确定、KV 写失败、丢失成功响应及独立 grant 并发；158 项 Cloudflare Portal 包测试及包级 source/test typecheck 通过。
+- 尚未接入生产 Worker，未部署或执行生产 migration；接入前必须先应用 0009。此项不等同于完成 authorization code 的跨请求并发消费、KV revoke 跨地域可见性、Google 登录/consent 或真人 OAuth 验收；完整 `test:local` 阻塞仍未解决。
+
+2026-09-12 第六批实现进度（成员查询、code 单次消费、MCP OIDC 核心，纳入本次 checkpoint）：
+
+- 新增只读 `src/mcp/members.ts`，OAuth provider 默认使用真实 Portal D1 查询 active、已绑定成员，支持按 memberId 或 issuer/subject 查找。按当前 D1 邮箱执行 canary，不按邮箱自动绑定，不触碰 WebUI session/bootstrap/audit。
+- 真实 D1 集成验证成员停用、issuer/subject 改变、邮箱移出 canary、解除绑定，以及相同 Google 身份以新 memberId 重新邀请后旧 grant 仍拒绝；错误请求不消耗有效 refresh token。
+- 新增 `0010_mcp_code_consumption.sql`，在库验证 code/client/PKCE 和 adapter 验证成员/期限后，以独立 code 哈希表原子消费。与 refresh 共用内部消费逻辑，但表和到期时间分离；code 消费记录保留至少 5 分钟，不保存明文。
+- 8 路并发 code 兑换仅一个成功；错误 PKCE/client/resource 或已移除成员不消耗 code。消费后的 KV 故障、恢复旧 KV grant 也不能再次兑换。D1/KV 无联合事务，仍失败关闭；库在后续已消费 code 重放时可能撤销整个 grant，因此不承诺并发攻击下成功响应中的 token 必然持续有效。
+- `createAdminMcpGoogleLogin` 复用现有经测试的 Google 校验核心，但固定独立 callback、`__Host-unidocs_admin_mcp_oauth` Cookie 和不透明 transaction ID。原 WebUI 导出与路径不变；MCP/WebUI Cookie 互不接受，拒绝错误签名、nonce、issuer/audience/azp/time/email_verified，不返回 Google token 或创建 session。
+- OIDC 核心尚未接入 AES-GCM KV transaction adapter、持久化 callback 单次消费或 consent UI。当前单元测试使用内存 transaction port，不能视作完整浏览器授权闭环或生产验证。
+- 验证通过：22 项 workerd MCP/OAuth/D1 集成、171 项 Cloudflare Portal 包测试（含 49 项共享 Google 登录测试）、包级 source/test typecheck、2 项真实 D1/workerd WebUI BFF 回归。未重新运行有已知失败的完整 `test:local`。
+- 纳入本次 checkpoint，未部署；生产接入前需先应用 0008、0009、0010 及后续必要 migration，默认 MCP 开关仍关闭。
+
 退出条件：没有未决项会改变 OAuth audience、scope 名、audit schema 或 tool 名。
 
 ### Phase 1：read-only remote MCP canary
 
 - [ ] 创建 OAUTH_KV 与精确 `/mcp`、metadata、`/oauth/admin-mcp/*` routes；
-- [ ] 实现 exact-path dispatcher、OAuth discovery/register/authorize/callback/token/revoke；
-- [ ] 实现 consent UI 和 D1 bound-member 检查；
+- [x] 实现 exact-path dispatcher、Cookie 隔离与请求体上限；
+- [x] 实现 OAuth provider 工厂及 discovery/register/token/revoke 本地验证；
+- [x] 实现独立 MCP Google OIDC 校验核心及 Cookie/callback 隔离；
+- [ ] 将加密 transaction 存储、Google authorize/callback 与 consent UI 连成授权闭环；
+- [x] 接入真实 D1 bound-member 查询；
+- [ ] 将 OAuth provider 与 tool handler 接入生产 Worker；
 - [ ] 实现 `whoami` 与 14 个 read tools；
 - [ ] mutations kill switch 全部关闭；
 - [ ] WebUI 增加“连接 AI 工具”对话框，显示 remote MCP URL 和 VS Code 配置；
@@ -443,7 +501,7 @@ git diff --check
 2. 用户在 Google client 中登记 `https://unidocs.shazhou.work/oauth/admin-mcp/google/callback`；
 3. 创建 `unidocs-admin-mcp-oauth` KV；
 4. 生成并通过 stdin 安装 `OAUTH_STATE_ENCRYPTION_KEY`；
-5. 应用 audit attribution migration；
+5. 应用 `0008_mcp_audit_attribution.sql`、`0009_mcp_refresh_consumption.sql` 和 `0010_mcp_code_consumption.sql`，以及后续实现新增的必要 migration；
 6. 部署精确 MCP/OAuth routes，`MCP_ENABLED=true`、三个 mutation switch 全 false、email allowlist 仅当前验收账号；
 7. GitHub Copilot 配置：
 

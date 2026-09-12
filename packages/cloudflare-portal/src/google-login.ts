@@ -4,6 +4,7 @@ import { hashSessionSecret } from "./auth.js";
 import type { PortalGoogleConfig } from "./google-config.js";
 
 export const LOGIN_COOKIE = "__Host-unidocs_admin_login";
+export const MCP_LOGIN_COOKIE = "__Host-unidocs_admin_mcp_oauth";
 const loginLifetime = 600;
 const discoveryUrl = "https://accounts.google.com/.well-known/openid-configuration";
 const authorizationUrl = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -47,12 +48,36 @@ export function portalReturnPath(value: string): string {
   return url.pathname + url.search + url.hash;
 }
 
-function loginCookie(value: string, maxAge: number): string {
-  return `${LOGIN_COOKIE}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+function loginCookie(name: string, value: string, maxAge: number): string {
+  return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
 }
 
 export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts) {
-  if (config.issuer !== "https://accounts.google.com" || new URL(config.origin).origin !== config.origin || !config.origin.startsWith("https://") || config.redirectUri !== `${config.origin}/admin/auth/callback` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
+  return createGoogleLogin(config, ports, {
+    beginPath: "/admin/auth/login", callbackPath: "/admin/auth/callback", cookieName: LOGIN_COOKIE,
+    returnParameter: "returnTo", defaultReturn: "/admin/", validateReturn: portalReturnPath,
+  });
+}
+
+export function createAdminMcpGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts) {
+  return createGoogleLogin(config, ports, {
+    beginPath: "/oauth/admin-mcp/authorize", callbackPath: "/oauth/admin-mcp/google/callback", cookieName: MCP_LOGIN_COOKIE,
+    returnParameter: "transaction", defaultReturn: "", validateReturn: value => {
+      if (!opaquePattern.test(value)) throw new AdminAccessError("unauthorized");
+      return value;
+    },
+  });
+}
+
+function createGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts, surface: {
+  readonly beginPath: string;
+  readonly callbackPath: string;
+  readonly cookieName: string;
+  readonly returnParameter: string;
+  readonly defaultReturn: string;
+  readonly validateReturn: (value: string) => string;
+}) {
+  if (config.issuer !== "https://accounts.google.com" || new URL(config.origin).origin !== config.origin || !config.origin.startsWith("https:") || config.redirectUri !== `${config.origin}${surface.callbackPath}` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
 
   const boundedFetch: typeof fetch = async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -100,8 +125,8 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
   return {
     async begin(request: Request): Promise<Response> {
       const url = new URL(request.url);
-      if (request.method !== "GET" || url.origin !== config.origin || url.pathname !== "/admin/auth/login" || url.searchParams.getAll("returnTo").length > 1) throw new AdminAccessError("unauthorized");
-      const returnTo = portalReturnPath(url.searchParams.get("returnTo") ?? "/admin/");
+      if (request.method !== "GET" || url.origin !== config.origin || url.pathname !== surface.beginPath || url.searchParams.getAll(surface.returnParameter).length > 1) throw new AdminAccessError("unauthorized");
+      const returnTo = surface.validateReturn(url.searchParams.get(surface.returnParameter) ?? surface.defaultReturn);
       const server = await metadata();
       const state = oauth.generateRandomState();
       const browser = oauth.generateRandomState();
@@ -121,20 +146,20 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
         code_challenge_method: "S256",
       }).toString();
       await ports.put({ stateHash: await hashSessionSecret(state), browserHash: await hashSessionSecret(browser), verifier, nonce, returnTo, createdAt: now, expiresAt: now + loginLifetime });
-      return new Response(null, { status: 303, headers: { Location: target.href, "Set-Cookie": loginCookie(browser, loginLifetime), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+      return new Response(null, { status: 303, headers: { Location: target.href, "Set-Cookie": loginCookie(surface.cookieName, browser, loginLifetime), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
     },
 
     async complete(request: Request) {
       let stage: GoogleLoginStage = "callback";
       try {
         const url = new URL(request.url);
-        if (request.method !== "GET" || url.origin !== config.origin || url.pathname !== "/admin/auth/callback" || url.hash) throw new AdminAccessError("unauthorized");
+        if (request.method !== "GET" || url.origin !== config.origin || url.pathname !== surface.callbackPath || url.hash) throw new AdminAccessError("unauthorized");
         const state = url.searchParams.get("state");
         if (!state || !opaquePattern.test(state) || url.searchParams.getAll("state").length !== 1 || url.searchParams.getAll("code").length > 1 || url.search.length > 8192) throw new AdminAccessError("unauthorized");
         stage = "browser_binding";
-        const cookies = (request.headers.get("cookie") ?? "").split(";").map(cookie => cookie.trim()).filter(cookie => cookie.split("=", 1)[0] === LOGIN_COOKIE);
+        const cookies = (request.headers.get("cookie") ?? "").split(";").map(cookie => cookie.trim()).filter(cookie => cookie.split("=", 1)[0] === surface.cookieName);
         if (cookies.length !== 1) throw new AdminAccessError("unauthorized");
-        const browser = cookies[0].slice(LOGIN_COOKIE.length + 1);
+        const browser = cookies[0].slice(surface.cookieName.length + 1);
         if (!opaquePattern.test(browser)) throw new AdminAccessError("unauthorized");
         const now = currentTime();
         const stateHash = await hashSessionSecret(state);
@@ -142,7 +167,7 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
         stage = "state";
         const transaction = await ports.take(stateHash, browserHash, now);
         if (!transaction || transaction.stateHash !== stateHash || transaction.browserHash !== browserHash || !Number.isSafeInteger(transaction.createdAt) || !Number.isSafeInteger(transaction.expiresAt) || transaction.createdAt > now || transaction.expiresAt <= now || transaction.expiresAt <= transaction.createdAt || transaction.expiresAt - transaction.createdAt > loginLifetime || !opaquePattern.test(transaction.verifier) || !opaquePattern.test(transaction.nonce)) throw new AdminAccessError("unauthorized");
-        const returnTo = portalReturnPath(transaction.returnTo);
+        const returnTo = surface.validateReturn(transaction.returnTo);
         stage = "discovery";
         const server = await metadata();
         const client: oauth.Client = { client_id: config.clientId, id_token_signed_response_alg: "RS256", [oauth.clockSkew]: now - Math.floor(Date.now() / 1000), [oauth.clockTolerance]: 30 };
@@ -164,7 +189,7 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
         const identity = googleIdentityFromConfirmedLogin(claims, completedAt);
         stage = "recent_authentication";
         requireRecentAuthentication(identity, completedAt);
-        return { identity, returnTo, clearLoginCookie: loginCookie("", 0) };
+        return { identity, returnTo, clearLoginCookie: loginCookie(surface.cookieName, "", 0) };
       } catch (error) {
         if (error instanceof GoogleLoginError) throw error;
         throw new GoogleLoginError(stage);

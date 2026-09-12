@@ -21,6 +21,7 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "0.10.3",
     "@orpc/openapi": "1.15.0",
     "@orpc/server": "1.15.0",
     "@orpc/zod": "1.15.0",
