@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest";
 import { ADMIN_MCP_BODY_MAX_BYTES, ADMIN_MCP_OAUTH_BODY_MAX_BYTES, ADMIN_MCP_PATHS, dispatchAdminMcp } from "../src/mcp/dispatcher.js";
 
 const publicOrigin = "https://unidocs.shazhou.work";
-const cookies = "__Host-unidocs_admin=admin-secret; __Host-unidocs_admin_csrf=csrf-secret; __Host-unidocs_admin_mcp_oauth=oauth-state; __Host-unidocs_admin_mcp_consent=consent-state; other=unrelated";
+const cookies = "__Host-unidocs_admin=admin-secret; __Host-unidocs_admin_csrf=csrf-secret; __Host-unidocs_admin_mcp_consent=consent-state; other=unrelated";
 
 test.each(ADMIN_MCP_PATHS)("disabled surface returns secure 404 without downstream access: %s", async path => {
   const handler = vi.fn(async () => new Response("unexpected"));
@@ -19,31 +19,54 @@ test.each(["/admin/", "/oauth/unidocs-cloudflare/token", "/oauth/admin-mcp/unkno
 });
 
 test.each(ADMIN_MCP_PATHS)("strips cross-surface credentials in both directions: %s", async path => {
-  const browser = path.endsWith("/authorize") || path.endsWith("/callback");
+  const browser = path.endsWith("/authorize");
   const handler = vi.fn(async (request: Request) => {
-    expect(request.headers.get("Cookie")).toBe(browser ? "__Host-unidocs_admin_mcp_oauth=oauth-state; __Host-unidocs_admin_mcp_consent=consent-state" : null);
+    expect(request.headers.get("Cookie")).toBe(browser ? "__Host-unidocs_admin=admin-secret; __Host-unidocs_admin_mcp_consent=consent-state" : null);
     expect(request.headers.get("X-CSRF-Token")).toBeNull();
     const headers = new Headers({ "Cache-Control": "public", "Content-Security-Policy": "script-src *" });
     headers.append("Set-Cookie", "__Host-unidocs_admin=forbidden; Secure; Path=/");
-    headers.append("Set-Cookie", "__Host-unidocs_admin_mcp_oauth=next; Secure; Path=/");
+    headers.append("Set-Cookie", "__Host-unidocs_admin_mcp_consent=next; Secure; Path=/");
+    if (browser) headers.set("X-Admin-MCP-Client-Redirect", "https://vscode.dev/oauth/callback");
     return new Response("ok", { headers });
   });
   const response = await dispatchAdminMcp(new Request(publicOrigin + path, { headers: { cookie: cookies, "x-csrf-token": "csrf-secret" } }), { enabled: true, publicOrigin, handler });
   expect(response?.status).toBe(200);
-  expect(response?.headers.getSetCookie()).toEqual(browser ? ["__Host-unidocs_admin_mcp_oauth=next; Secure; Path=/"] : []);
+  expect(response?.headers.getSetCookie()).toEqual(browser ? ["__Host-unidocs_admin_mcp_consent=next; Secure; Path=/"] : []);
   expect(response?.headers.get("Cache-Control")).toBe("no-store");
-  if (browser) expect(response?.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+  if (browser) {
+    expect(response?.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+    expect(response?.headers.get("Content-Security-Policy")).toContain(`form-action ${publicOrigin} https://vscode.dev`);
+    expect(response?.headers.get("Content-Security-Policy")).not.toContain("form-action *");
+    expect(response?.headers.get("X-Admin-MCP-Client-Redirect")).toBeNull();
+  }
 });
 
-test("browser consent POST requires same origin while Google callback GET can navigate cross-site", async () => {
+test.each([
+  ["http://127.0.0.1:43210/callback", "http://127.0.0.1:43210"],
+  ["vscode://github.copilot/oauth/callback", "vscode:"],
+  ["javascript:alert(1)", null],
+  ["http://remote.example/callback", null],
+])("restricts client redirect form-action source: %s", async (redirect, expected) => {
+  const response = await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize"), {
+    enabled: true, publicOrigin,
+    handler: async () => new Response("ok", { headers: { "X-Admin-MCP-Client-Redirect": redirect! } }),
+  });
+  const csp = response?.headers.get("Content-Security-Policy") ?? "";
+  expect(response?.headers.get("X-Admin-MCP-Client-Redirect")).toBeNull();
+  if (expected) expect(csp).toContain(` ${expected}`);
+  else expect(csp).toBe(`default-src 'none'; style-src 'unsafe-inline'; form-action ${publicOrigin}; base-uri 'none'; frame-ancestors 'none'`);
+});
+
+test("browser consent POST requires same origin", async () => {
   const handler = vi.fn(async () => new Response("ok"));
-  for (const origin of [undefined, "null", "https://other.example"]) {
+  for (const origin of [undefined, "https://other.example"]) {
     const headers = origin ? { origin } : undefined;
     expect((await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize", { method: "POST", headers }), { enabled: true, publicOrigin, handler }))?.status).toBe(403);
   }
+  expect((await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize", { method: "POST", headers: { origin: "null", "sec-fetch-site": "cross-site" } }), { enabled: true, publicOrigin, handler }))?.status).toBe(403);
   expect(handler).not.toHaveBeenCalled();
   expect((await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize", { method: "POST", headers: { origin: publicOrigin } }), { enabled: true, publicOrigin, handler }))?.status).toBe(200);
-  expect((await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/google/callback?code=private", { headers: { "sec-fetch-site": "cross-site" } }), { enabled: true, publicOrigin, handler }))?.status).toBe(200);
+  expect((await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize", { method: "POST", headers: { origin: "null", "sec-fetch-site": "same-origin" } }), { enabled: true, publicOrigin, handler }))?.status).toBe(200);
 });
 
 test("rejects foreign origins, wrong hosts and duplicate OAuth cookies", async () => {
@@ -51,8 +74,14 @@ test("rejects foreign origins, wrong hosts and duplicate OAuth cookies", async (
   const options = { enabled: true, publicOrigin, handler };
   expect((await dispatchAdminMcp(new Request("https://bundles.shazhou.work/mcp"), options))?.status).toBe(404);
   expect((await dispatchAdminMcp(new Request(publicOrigin + "/mcp", { headers: { origin: "https://other.example" } }), options))?.status).toBe(403);
-  expect((await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize", { headers: { cookie: "__Host-unidocs_admin_mcp_oauth=one; __Host-unidocs_admin_mcp_oauth=two" } }), options))?.status).toBe(400);
+  expect((await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize", { headers: { cookie: "__Host-unidocs_admin=one; __Host-unidocs_admin=two" } }), options))?.status).toBe(400);
   expect(handler).not.toHaveBeenCalled();
+});
+
+test("consent POST strips the Admin session while retaining its one-time cookie", async () => {
+  const handler = vi.fn(async (request: Request) => Response.json({ cookie: request.headers.get("Cookie") }));
+  const response = await dispatchAdminMcp(new Request(publicOrigin + "/oauth/admin-mcp/authorize", { method: "POST", headers: { origin: publicOrigin, cookie: cookies } }), { enabled: true, publicOrigin, handler });
+  expect(await response?.json()).toEqual({ cookie: "__Host-unidocs_admin_mcp_consent=consent-state" });
 });
 
 test("bounds actual streamed bytes and cancels an oversized OAuth body", async () => {

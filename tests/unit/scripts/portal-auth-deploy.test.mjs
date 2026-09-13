@@ -8,12 +8,20 @@ const template = { compatibility_date: "2026-09-10", routes: [{ pattern: "unidoc
 describe("Portal auth deployment preparation", () => {
   test("approved production cutover owns only admin routes and a separate database", async () => {
     const config = JSON.parse(await readFile(new URL("../../../packages/cloudflare-portal/wrangler.production.jsonc", import.meta.url), "utf8"));
-    expect(config.routes.map(route => route.pattern)).toEqual(["unidocs.shazhou.work/admin", "unidocs.shazhou.work/admin/*"]);
+    expect(config.routes.map(route => route.pattern)).toEqual([
+      "unidocs.shazhou.work/admin", "unidocs.shazhou.work/admin/*", "unidocs.shazhou.work/mcp",
+      "unidocs.shazhou.work/.well-known/oauth-protected-resource/mcp",
+      "unidocs.shazhou.work/.well-known/oauth-authorization-server", "unidocs.shazhou.work/oauth/admin-mcp/*",
+      "bundles.shazhou.work",
+    ]);
     expect(config.d1_databases[0].database_id).not.toBe("d3c78c42-b32f-4a4d-86e4-6cf6341baa8f");
     expect(config.name).toBe("unidocs-portal");
     expect(config.workers_dev).toBe(false);
     expect(config.vars).not.toHaveProperty("GATEWAY_OIDC_CLIENT_SECRET");
     expect(config.secrets.required).toContain("GATEWAY_OIDC_CLIENT_SECRET");
+    expect(config.secrets.required).toContain("OAUTH_STATE_ENCRYPTION_KEY");
+    expect(config.vars.MCP_ENABLED).toBe("true");
+    expect(config.kv_namespaces).toEqual([{ binding: "OAUTH_KV", id: "dc729749e0ad46de981e99d10d29ffd1" }]);
   });
   test("uses an independent Worker and D1 with no public routes or copied secret values", () => {
     const config = createPortalAuthDeploymentConfig(template, { ...settings, clientSecret: "do-not-serialize" });

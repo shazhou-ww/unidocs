@@ -22,11 +22,13 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.10.3",
+    "@modelcontextprotocol/server": "2.0.0",
     "@orpc/openapi": "1.15.0",
     "@orpc/server": "1.15.0",
     "@orpc/zod": "1.15.0",
     "@unidocs/portal-service": "workspace:*",
     "@unidocs/protocol-admin-portal": "workspace:*",
+    "agents": "0.21.0",
     "jose": "^6.2.10",
     "oauth4webapi": "^3.8.8"
   },

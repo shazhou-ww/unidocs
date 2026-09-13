@@ -21,15 +21,48 @@ import { D1OperatorValidationRepository } from "./operator-validations-repositor
 import { createMarkdownOperatorValidationTarget } from "./operator-validation-target.js";
 import { createOperatorsHttp } from "./operators-http.js";
 import { D1OperatorRepository } from "./operators-repository.js";
-import { dispatchAdminMcp } from "./mcp/dispatcher.js";
+import { ADMIN_MCP_PATHS, dispatchAdminMcp } from "./mcp/dispatcher.js";
+import { hashSessionSecret, sessionTokenFromCookie } from "./auth.js";
+import { createAdminMcpAuthorizationTransactions } from "./mcp/authorization-transactions.js";
+import { createAdminMcpAuthorization } from "./mcp/authorization.js";
+import { D1AdminMcpMembers } from "./mcp/members.js";
+import { handleAdminMcp } from "./mcp/worker.js";
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
     try {
-      const mcpResponse = await dispatchAdminMcp(request, {
-        enabled: env.MCP_ENABLED === "true",
-        publicOrigin: env.MCP_PUBLIC_ORIGIN,
-      });
+      const mcpEnabled = env.MCP_ENABLED === "true";
+      const requestPath = new URL(request.url).pathname;
+      let mcpResponse: Response | null = null;
+      if (mcpEnabled && (ADMIN_MCP_PATHS as readonly string[]).includes(requestPath)) {
+        if (!context) throw new Error("MCP execution context unavailable");
+        const { createAdminMcpOAuth } = await import("./mcp/oauth.js");
+        const members = new D1AdminMcpMembers(env.DB);
+        const allowedEmails = env.MCP_ADMIN_EMAIL_ALLOWLIST.split(",").map(value => value.trim()).filter(Boolean);
+        const provider = createAdminMcpOAuth({
+          publicOrigin: env.MCP_PUBLIC_ORIGIN, allowedEmails,
+          authorize: (authorizationRequest, helpers) => {
+            const authRepository = new D1PortalAuthRepository(env.DB);
+            const transactions = createAdminMcpAuthorizationTransactions({
+              database: env.DB, storage: env.OAUTH_KV, encryptionKey: env.OAUTH_STATE_ENCRYPTION_KEY, publicOrigin: env.MCP_PUBLIC_ORIGIN,
+            });
+            return createAdminMcpAuthorization({
+              publicOrigin: env.MCP_PUBLIC_ORIGIN, helpers, transactions,
+              authenticateSession: async sessionRequest => {
+                const sessionHash = await hashSessionSecret(sessionTokenFromCookie(sessionRequest.headers.get("Cookie")));
+                const session = await authRepository.findSession(sessionHash);
+                if (!session) throw new Error("Invalid Admin session");
+                return { memberId: session.memberId, identity: session.identity };
+              },
+              findMember: memberId => members.findById(memberId), allowedEmails,
+            })(authorizationRequest);
+          },
+          api: (apiRequest, grant) => handleAdminMcp(apiRequest, env, context, grant, { publicOrigin: env.MCP_PUBLIC_ORIGIN, allowedEmails }),
+        });
+        mcpResponse = await provider.fetch(request, env, context, true);
+      } else if (!mcpEnabled) {
+        mcpResponse = await dispatchAdminMcp(request, { enabled: false, publicOrigin: env.MCP_PUBLIC_ORIGIN });
+      }
       if (mcpResponse) return mcpResponse;
       if (new URL(request.url).origin === env.BUNDLE_ORIGIN) return serveBundleObject(request, env.BUNDLES, env.PORTAL_ORIGIN);
       // Ahead of the BFF, and ahead of reading the Google settings: the tenant

@@ -31,7 +31,7 @@ test("MCP dispatcher isolates cookies and bounds bodies inside workerd", async (
   }] }));
   try {
     const headers = {
-      cookie: "__Host-unidocs_admin=private; __Host-unidocs_admin_mcp_oauth=state; __Host-unidocs_admin_mcp_consent=consent",
+      cookie: "__Host-unidocs_admin=private; __Host-unidocs_admin_mcp_consent=consent",
       "x-csrf-token": "private-csrf", authorization: "Bearer dedicated-mcp-token",
     };
     const response = await runtime.dispatchFetch("https://portal.test/mcp", { method: "POST", headers, body: "{}" });
@@ -40,7 +40,7 @@ test("MCP dispatcher isolates cookies and bounds bodies inside workerd", async (
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const browser = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/authorize", { headers });
-    expect(await browser.json()).toMatchObject({ cookie: "__Host-unidocs_admin_mcp_oauth=state; __Host-unidocs_admin_mcp_consent=consent", csrf: null });
+    expect(await browser.json()).toMatchObject({ cookie: "__Host-unidocs_admin=private; __Host-unidocs_admin_mcp_consent=consent", csrf: null });
     expect(browser.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
     expect((await runtime.dispatchFetch("https://portal.test/mcp?disabled")).status).toBe(404);
     for (const extra of [0, 1]) {
@@ -50,6 +50,80 @@ test("MCP dispatcher isolates cookies and bounds bodies inside workerd", async (
     const foreign = await runtime.dispatchFetch("https://portal.test/mcp", { headers: { origin: "https://other.test" } });
     expect(foreign.status).toBe(403);
     expect(await (await runtime.dispatchFetch("https://portal.test/oauth/unidocs-cloudflare/token")).text()).toBe("outside-mcp");
+  } finally {
+    await runtime.dispose();
+  }
+});
+
+test("Admin MCP browser consent completes a real provider code exchange", async () => {
+  const stateKey = randomBytes(32).toString("base64url");
+  const built = await build({
+    stdin: {
+      contents: `import { createAdminMcpOAuth } from './packages/cloudflare-portal/src/mcp/oauth.ts';
+        import { createAdminMcpAuthorization } from './packages/cloudflare-portal/src/mcp/authorization.ts';
+        import { createAdminMcpAuthorizationTransactions } from './packages/cloudflare-portal/src/mcp/authorization-transactions.ts';
+        import { D1AdminMcpMembers } from './packages/cloudflare-portal/src/mcp/members.ts';
+        import { handleAdminMcp } from './packages/cloudflare-portal/src/mcp/worker.ts';
+        const origin = 'https://portal.test';
+        const read = async () => ({ items: [], nextCursor: null });
+        const services = { documentTypes: { get: read, list: read }, documentContracts: { get: read, list: read }, typeCardBundles: { get: read, list: read }, viewBundles: { get: read, list: read }, operatorValidations: { get: read }, operators: { get: read, list: read }, administrators: { get: read, list: read }, auditEvents: { list: read } };
+        export default { async fetch(request, env, context) {
+          const transactions = createAdminMcpAuthorizationTransactions({ database: env.DB, storage: env.OAUTH_KV, encryptionKey: env.STATE_KEY, publicOrigin: origin, now: () => 1800000000 });
+          const members = new D1AdminMcpMembers(env.DB);
+          const provider = createAdminMcpOAuth({ publicOrigin: origin, allowedEmails: ['admin@example.com'], now: () => 1800000000,
+            authorize: (authorizationRequest, helpers) => createAdminMcpAuthorization({ publicOrigin: origin, helpers, transactions,
+              authenticateSession: async request => { if (!(request.headers.get('cookie') ?? '').includes('__Host-unidocs_admin=session')) throw new Error('no session'); return { memberId: 'member', identity: { issuer: 'https://accounts.google.com', subject: 'subject', email: 'admin@example.com', authenticatedAt: 1800000000 } }; },
+              findMember: memberId => members.findById(memberId), allowedEmails: ['admin@example.com'], now: () => 1800000000 })(authorizationRequest),
+            api: (apiRequest, grant) => handleAdminMcp(apiRequest, { ...env, BUNDLES: {}, BUNDLE_ORIGIN: 'https://bundles.test', ADMIN_MARKDOWN_SERVICE: { fetch: () => new Response(null, { status: 503 }) }, MARKDOWN_OPERATOR_HMAC_KEY: 'a'.repeat(64) }, context, grant, { publicOrigin: origin, allowedEmails: ['admin@example.com'], services, now: () => 1800000000 }),
+          });
+          return provider.fetch(request, env, context);
+        } };`,
+      resolveDir: fileURLToPath(new URL("../../../", import.meta.url)), loader: "ts",
+    },
+    bundle: true, write: false, format: "esm", platform: "browser", target: "es2024", external: ["cloudflare:workers", "node:async_hooks", "node:crypto"],
+  });
+  const runtime = new Miniflare(convertV4MiniflareOptions({ workers: [{
+    name: "portal-mcp-browser-authorization", modules: true, script: built.outputFiles[0].text, compatibilityDate: "2026-08-18", compatibilityFlags: ["nodejs_compat"],
+    bindings: { STATE_KEY: stateKey }, kvNamespaces: { OAUTH_KV: "portal-mcp-browser-authorization" }, d1Databases: { DB: "portal-mcp-browser-authorization" },
+  }] }));
+  try {
+    const database = await runtime.getD1Database("DB", "portal-mcp-browser-authorization");
+    for (const migrationName of ["0001_admin_auth.sql", "0010_mcp_code_consumption.sql", "0011_mcp_authorization_transaction_consumption.sql"]) {
+      const migration = await readFile(new URL(`../../../packages/cloudflare-portal/migrations/${migrationName}`, import.meta.url), "utf8");
+      await database.batch(migration.split(";").map(statement => statement.trim()).filter(Boolean).map(statement => database.prepare(statement)));
+    }
+    await database.prepare(`INSERT INTO portal_administrators (member_id, email, issuer, subject, added_by, created_at, updated_at)
+      VALUES ('member', 'admin@example.com', 'https://accounts.google.com', 'subject', 'fixture', 1800000000, 1800000000)`).run();
+    const registration = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "GitHub Copilot", redirect_uris: ["http://127.0.0.1:43210/callback"], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
+    const client = await registration.json();
+    const verifier = randomBytes(32).toString("base64url");
+    const authorizationParams = { client_id: client.client_id, redirect_uri: client.redirect_uris[0], response_type: "code", scope: "admin:read admin:content", resource: "https://portal.test/mcp", state: "client-state", code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" };
+    const started = await runtime.dispatchFetch(`https://portal.test/oauth/admin-mcp/authorize?${new URLSearchParams(authorizationParams)}`, { redirect: "manual" });
+    expect(started.status).toBe(303);
+    const loginLocation = new URL(started.headers.get("location"));
+    expect(loginLocation.pathname).toBe("/admin/auth/login");
+    const resumePath = loginLocation.searchParams.get("returnTo");
+    expect(resumePath).toMatch(/^\/oauth\/admin-mcp\/authorize\?resume=[A-Za-z0-9_-]{43}$/);
+    const consent = await runtime.dispatchFetch(new URL(resumePath, "https://portal.test"), { headers: { cookie: "__Host-unidocs_admin=session" } });
+    expect(consent.status).toBe(200);
+    const consentHtml = await consent.text();
+    const consentId = /name="consent_id" value="([^"]+)"/.exec(consentHtml)[1];
+    const csrfToken = /name="csrf_token" value="([^"]+)"/.exec(consentHtml)[1];
+    const consentCookie = consent.headers.getSetCookie().find(value => value.startsWith("__Host-unidocs_admin_mcp_consent=")).split(";", 1)[0];
+    const approved = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/authorize", { method: "POST", redirect: "manual", headers: { origin: "https://portal.test", cookie: consentCookie, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams([["consent_id", consentId], ["csrf_token", csrfToken], ["decision", "approve"], ["scope", "admin:read"]]).toString() });
+    expect(approved.status).toBe(302);
+    const code = new URL(approved.headers.get("location")).searchParams.get("code");
+    const exchanged = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: client.client_id, redirect_uri: client.redirect_uris[0], grant_type: "authorization_code", code, code_verifier: verifier, resource: "https://portal.test/mcp" }).toString() });
+    expect(exchanged.status).toBe(200);
+    const tokens = await exchanged.json();
+    expect(tokens).toMatchObject({ access_token: expect.any(String), token_type: "bearer", scope: "admin:read" });
+    const mcp = async (method, params) => runtime.dispatchFetch("https://portal.test/mcp", { method: "POST", headers: { authorization: `Bearer ${tokens.access_token}`, accept: "application/json, text/event-stream", "content-type": "application/json", "mcp-protocol-version": "2026-07-28", "mcp-method": method, ...(params.name ? { "mcp-name": params.name } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method, params: { ...params, _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientInfo": { name: "integration", version: "1.0.0" }, "io.modelcontextprotocol/clientCapabilities": {} } } }) });
+    const listedResponse = await mcp("tools/list", {});
+    expect(listedResponse.status, await listedResponse.clone().text()).toBe(200);
+    const listed = await listedResponse.json();
+    expect(listed.result.tools.map(tool => tool.name)).toHaveLength(15);
+    const whoami = await (await mcp("tools/call", { name: "whoami", arguments: {} })).json();
+    expect(whoami.result.structuredContent).toMatchObject({ memberId: "member", identity: { email: "admin@example.com" }, scopes: ["admin:read"] });
   } finally {
     await runtime.dispose();
   }

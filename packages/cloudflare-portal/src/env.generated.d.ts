@@ -3,14 +3,17 @@
 interface __BaseEnv_Env {
 	BUNDLES: R2Bucket;
 	DB: D1Database;
+	OAUTH_KV: KVNamespace;
 	MCP_ENABLED: string;
 	MCP_PUBLIC_ORIGIN: string;
+	MCP_ADMIN_EMAIL_ALLOWLIST: string;
 	PORTAL_ORIGIN: string;
 	BUNDLE_ORIGIN: string;
 	GATEWAY_OIDC_ISSUER: string;
 	GATEWAY_OIDC_CLIENT_ID: string;
 	PORTAL_BOOTSTRAP_EMAIL: string;
 	GATEWAY_OIDC_CLIENT_SECRET: string;
+	OAUTH_STATE_ENCRYPTION_KEY: string;
 	MARKDOWN_OPERATOR_HMAC_KEY: string;
 	ADMIN_MARKDOWN_SERVICE: Fetcher /* unidocs-markdown */;
 }
@@ -25,5 +28,5 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "MCP_ENABLED" | "MCP_PUBLIC_ORIGIN" | "PORTAL_ORIGIN" | "BUNDLE_ORIGIN" | "GATEWAY_OIDC_ISSUER" | "GATEWAY_OIDC_CLIENT_ID" | "PORTAL_BOOTSTRAP_EMAIL" | "GATEWAY_OIDC_CLIENT_SECRET" | "MARKDOWN_OPERATOR_HMAC_KEY">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "MCP_ENABLED" | "MCP_PUBLIC_ORIGIN" | "MCP_ADMIN_EMAIL_ALLOWLIST" | "PORTAL_ORIGIN" | "BUNDLE_ORIGIN" | "GATEWAY_OIDC_ISSUER" | "GATEWAY_OIDC_CLIENT_ID" | "PORTAL_BOOTSTRAP_EMAIL" | "GATEWAY_OIDC_CLIENT_SECRET" | "OAUTH_STATE_ENCRYPTION_KEY" | "MARKDOWN_OPERATOR_HMAC_KEY">> {}
 }

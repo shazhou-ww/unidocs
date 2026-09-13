@@ -1,7 +1,6 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
 import { createPortalGoogleLogin, LOGIN_COOKIE, portalGoogleConfigFromGateway, portalReturnPath, type PortalLoginTransaction } from "../src/index.js";
-import { createAdminMcpGoogleLogin, MCP_LOGIN_COOKIE } from "../src/google-login.js";
 
 let keys: Awaited<ReturnType<typeof generateKeyPair>>;
 let jwks: { keys: object[] };
@@ -14,8 +13,8 @@ const origin = "https://portal.example";
 const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "existing-gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, origin);
 const discovery = { issuer: config.issuer, authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth", token_endpoint: "https://oauth2.googleapis.com/token", jwks_uri: "https://www.googleapis.com/oauth2/v3/certs", code_challenge_methods_supported: ["S256"], response_types_supported: ["code"], subject_types_supported: ["public"], id_token_signing_alg_values_supported: ["RS256"], authorization_response_iss_parameter_supported: true };
 
-async function setup(overrides: JWTPayload = {}, mcp = false) {
-  const loginConfig = mcp ? { ...config, redirectUri: `${origin}/oauth/admin-mcp/google/callback` } : config;
+async function setup(overrides: JWTPayload = {}, returnTo = "/admin/?tab=types#markdown") {
+  const loginConfig = config;
   let now = Math.floor(Date.now() / 1000);
   const transactions = new Map<string, PortalLoginTransaction>();
   let transaction: PortalLoginTransaction;
@@ -38,7 +37,7 @@ async function setup(overrides: JWTPayload = {}, mcp = false) {
     }
     throw new Error("Unexpected endpoint");
   });
-  const login = (mcp ? createAdminMcpGoogleLogin : createPortalGoogleLogin)(loginConfig, {
+  const login = createPortalGoogleLogin(loginConfig, {
     now: () => now,
     fetch: fetcher,
     put: async stored => { transaction = stored; transactions.set(stored.stateHash, stored); },
@@ -49,7 +48,7 @@ async function setup(overrides: JWTPayload = {}, mcp = false) {
       return stored;
     },
   });
-  const start = await login.begin(new Request(mcp ? `${origin}/oauth/admin-mcp/authorize?transaction=${"a".repeat(43)}` : `${origin}/admin/auth/login?returnTo=${encodeURIComponent("/admin/?tab=types#markdown")}`));
+  const start = await login.begin(new Request(`${origin}/admin/auth/login?returnTo=${encodeURIComponent(returnTo)}`));
   const target = new URL(start.headers.get("location")!);
   const cookie = start.headers.get("set-cookie")!.split(";")[0];
   const callback = (query = "") => new Request(`${loginConfig.redirectUri}?state=${target.searchParams.get("state")}&code=test-code&iss=${encodeURIComponent(config.issuer)}${query}`, { headers: { cookie } });
@@ -57,80 +56,20 @@ async function setup(overrides: JWTPayload = {}, mcp = false) {
 }
 
 describe("Portal Google authorization-code flow", () => {
-  test("MCP Google login uses an independent cookie, callback and opaque transaction", async () => {
-    const { login, target, start, callback } = await setup({}, true);
-    expect(target.searchParams.get("redirect_uri")).toBe(`${origin}/oauth/admin-mcp/google/callback`);
-    expect(target.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(start.headers.get("set-cookie")).toContain(`${MCP_LOGIN_COOKIE}=`);
-    expect(start.headers.get("set-cookie")).not.toContain(`${LOGIN_COOKIE}=`);
-    const result = await login.complete(callback());
-    expect(result.returnTo).toBe("a".repeat(43));
-    expect(result.identity).toMatchObject({ issuer: config.issuer, subject: "google-subject", email: "admin@example.com" });
-    expect(result.clearLoginCookie).toContain(`${MCP_LOGIN_COOKIE}=;`);
-    expect(result.clearLoginCookie).not.toContain("__Host-unidocs_admin=");
-    expect(JSON.stringify(result)).not.toContain("discarded-test-access-token");
-    expect(JSON.stringify(result)).not.toContain("fixture-secret");
-    await expect(login.complete(callback())).rejects.toMatchObject({ code: "unauthorized" });
+  test("allows only the exact MCP authorization resume path as a shared-login return target", () => {
+    const resume = `/oauth/admin-mcp/authorize?resume=${"a".repeat(43)}`;
+    expect(portalReturnPath(resume)).toBe(resume);
+    for (const invalid of [
+      "/oauth/admin-mcp/authorize", `${resume}&next=https://attacker.example`,
+      `/oauth/admin-mcp/authorize?resume=${"a".repeat(42)}`, "/oauth/admin-mcp/token",
+    ]) expect(() => portalReturnPath(invalid)).toThrow();
   });
 
-  test("MCP callback rejects WebUI cookies and paths before contacting Google", async () => {
-    const { login, callback, cookie, fetcher } = await setup({}, true);
-    const request = callback();
-    fetcher.mockClear();
-    for (const invalidCookie of ["", cookie.replace(MCP_LOGIN_COOKIE, LOGIN_COOKIE), "__Host-unidocs_admin=webui-session", `${cookie}; ${cookie}`]) {
-      await expect(login.complete(new Request(request.url, { headers: { cookie: invalidCookie } }))).rejects.toMatchObject({ code: "unauthorized" });
-    }
-    const wrongPath = new URL(request.url);
-    wrongPath.pathname = "/admin/auth/callback";
-    await expect(login.complete(new Request(wrongPath, { headers: { cookie } }))).rejects.toMatchObject({ code: "unauthorized" });
-    expect(fetcher).not.toHaveBeenCalled();
-    await expect(login.complete(request)).resolves.toHaveProperty("identity");
-    const webui = await setup();
-    await expect(webui.login.complete(new Request(webui.callback().url, { headers: { cookie: webui.cookie.replace(LOGIN_COOKIE, MCP_LOGIN_COOKIE) } }))).rejects.toMatchObject({ code: "unauthorized" });
-  });
-
-  test.each([
-    { nonce: "wrong" }, { aud: "other-client" }, { iss: "https://other.example" },
-    { azp: "other-client" }, { email_verified: false }, { iat: 1 }, { exp: 1 },
-    { aud: [config.clientId, "other-client"], azp: "other-client" },
-  ])("MCP rejects invalid signed Google claims %#", async overrides => {
-    const { login, callback } = await setup(overrides, true);
-    await expect(login.complete(callback())).rejects.toMatchObject({ code: "unauthorized" });
-  });
-
-  test("MCP Google callback rejects forged signatures", async () => {
-    const { login, callback, fetcher } = await setup({}, true);
-    const original = fetcher.getMockImplementation()!;
-    fetcher.mockImplementation(async (input, init) => {
-      const response = await original(input, init);
-      if (String(input) !== discovery.token_endpoint) return response;
-      const body = await response.json() as { id_token: string };
-      const parts = body.id_token.split(".");
-      parts[2] = (parts[2][0] === "A" ? "B" : "A") + parts[2].slice(1);
-      return Response.json({ ...body, id_token: parts.join(".") });
-    });
-    await expect(login.complete(callback())).rejects.toMatchObject({ code: "unauthorized" });
-  });
-
-  test("MCP callbacks require fresh state and only one concurrent callback exchanges the Google code", async () => {
-    const current = await setup({}, true);
-    const results = await Promise.allSettled([current.login.complete(current.callback()), current.login.complete(current.callback())]);
-    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
-    expect(current.fetcher.mock.calls.filter(([url]) => String(url) === discovery.token_endpoint)).toHaveLength(1);
-    const expired = await setup({}, true);
-    expired.advance(600);
-    await expect(expired.login.complete(expired.callback())).rejects.toMatchObject({ stage: "state" });
-    expect(expired.fetcher.mock.calls.filter(([url]) => String(url) === discovery.token_endpoint)).toHaveLength(0);
-  });
-
-  test("MCP login never treats an arbitrary return URL as a transaction", async () => {
-    const { login, fetcher } = await setup({}, true);
-    fetcher.mockClear();
-    for (const transaction of ["", "https://other.example", "/admin/", "a".repeat(42)]) {
-      await expect(login.begin(new Request(`${origin}/oauth/admin-mcp/authorize?transaction=${encodeURIComponent(transaction)}`))).rejects.toMatchObject({ code: "unauthorized" });
-    }
-    expect(fetcher).not.toHaveBeenCalled();
-    expect(() => createAdminMcpGoogleLogin(config, { now: () => 1, put: async () => {}, take: async () => null })).toThrow("Invalid Portal Google configuration");
+  test("the existing Admin Google callback returns to MCP authorization resume", async () => {
+    const resume = `/oauth/admin-mcp/authorize?resume=${"a".repeat(43)}`;
+    const current = await setup({}, resume);
+    expect(current.target.searchParams.get("redirect_uri")).toBe(`${origin}/admin/auth/callback`);
+    expect((await current.login.complete(current.callback())).returnTo).toBe(resume);
   });
 
   test("starts with existing Gateway client, independent callback, S256, nonce and browser binding", async () => {

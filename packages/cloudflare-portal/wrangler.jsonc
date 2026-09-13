@@ -12,6 +12,7 @@
   "vars": {
     "MCP_ENABLED": "false",
     "MCP_PUBLIC_ORIGIN": "https://unidocs.shazhou.work",
+    "MCP_ADMIN_EMAIL_ALLOWLIST": "shazhou.ww@gmail.com",
     "PORTAL_ORIGIN": "https://unidocs.shazhou.work",
     "BUNDLE_ORIGIN": "https://bundles.shazhou.work",
     "GATEWAY_OIDC_ISSUER": "https://accounts.google.com",
@@ -21,6 +22,7 @@
   "secrets": {
     "required": [
       "GATEWAY_OIDC_CLIENT_SECRET",
+      "OAUTH_STATE_ENCRYPTION_KEY",
       "MARKDOWN_OPERATOR_HMAC_KEY"
     ]
   },
@@ -30,6 +32,12 @@
       "database_name": "unidocs-portal-local",
       "database_id": "local-portal-auth",
       "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "local-admin-mcp-oauth"
     }
   ],
   "r2_buckets": [

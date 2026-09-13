@@ -18,6 +18,22 @@
       "zone_name": "shazhou.work"
     },
     {
+      "pattern": "unidocs.shazhou.work/mcp",
+      "zone_name": "shazhou.work"
+    },
+    {
+      "pattern": "unidocs.shazhou.work/.well-known/oauth-protected-resource/mcp",
+      "zone_name": "shazhou.work"
+    },
+    {
+      "pattern": "unidocs.shazhou.work/.well-known/oauth-authorization-server",
+      "zone_name": "shazhou.work"
+    },
+    {
+      "pattern": "unidocs.shazhou.work/oauth/admin-mcp/*",
+      "zone_name": "shazhou.work"
+    },
+    {
       "pattern": "bundles.shazhou.work",
       "custom_domain": true
     }
@@ -25,12 +41,14 @@
   "secrets": {
     "required": [
       "GATEWAY_OIDC_CLIENT_SECRET",
+      "OAUTH_STATE_ENCRYPTION_KEY",
       "MARKDOWN_OPERATOR_HMAC_KEY"
     ]
   },
   "vars": {
-    "MCP_ENABLED": "false",
+    "MCP_ENABLED": "true",
     "MCP_PUBLIC_ORIGIN": "https://unidocs.shazhou.work",
+    "MCP_ADMIN_EMAIL_ALLOWLIST": "shazhou.ww@gmail.com",
     "PORTAL_ORIGIN": "https://unidocs.shazhou.work",
     "BUNDLE_ORIGIN": "https://bundles.shazhou.work",
     "GATEWAY_OIDC_ISSUER": "https://accounts.google.com",
@@ -43,6 +61,12 @@
       "database_name": "unidocs-portal",
       "database_id": "b03c6e6b-e4b7-49a8-b3f1-6ab8e5baeae1",
       "migrations_dir": "migrations"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "dc729749e0ad46de981e99d10d29ffd1"
     }
   ],
   "r2_buckets": [

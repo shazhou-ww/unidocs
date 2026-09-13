@@ -3,6 +3,10 @@
     "unicas-control-plane": {
       "type": "http",
       "url": "https://unicas.shazhou.work/mcp"
+    },
+    "unidocs-admin": {
+      "type": "http",
+      "url": "https://unidocs.shazhou.work/mcp"
     }
   }
 }

@@ -4,7 +4,6 @@ import { hashSessionSecret } from "./auth.js";
 import { GOOGLE_ISSUER, isLocalDevOrigin, type PortalGoogleConfig } from "./google-config.js";
 
 export const LOGIN_COOKIE = "__Host-unidocs_admin_login";
-export const MCP_LOGIN_COOKIE = "__Host-unidocs_admin_mcp_oauth";
 const loginLifetime = 600;
 const discoveryUrl = "https://accounts.google.com/.well-known/openid-configuration";
 const authorizationUrl = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -40,6 +39,7 @@ export interface PortalLoginPorts {
 }
 
 export function portalReturnPath(value: string): string {
+  if (/^\/oauth\/admin-mcp\/authorize\?resume=[A-Za-z0-9_-]{43}$/.test(value)) return value;
   if (value.length > 2048 || !value.startsWith("/admin/") || /[\\\u0000-\u0020\u007f]/.test(value)) throw new AdminAccessError("unauthorized");
   const url = new URL(value, "https://portal.invalid");
   let pathname: string;
@@ -56,16 +56,6 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
   return createGoogleLogin(config, ports, {
     beginPath: "/admin/auth/login", callbackPath: "/admin/auth/callback", cookieName: LOGIN_COOKIE,
     returnParameter: "returnTo", defaultReturn: "/admin/", validateReturn: portalReturnPath,
-  });
-}
-
-export function createAdminMcpGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts) {
-  return createGoogleLogin(config, ports, {
-    beginPath: "/oauth/admin-mcp/authorize", callbackPath: "/oauth/admin-mcp/google/callback", cookieName: MCP_LOGIN_COOKIE,
-    returnParameter: "transaction", defaultReturn: "", validateReturn: value => {
-      if (!opaquePattern.test(value)) throw new AdminAccessError("unauthorized");
-      return value;
-    },
   });
 }
 

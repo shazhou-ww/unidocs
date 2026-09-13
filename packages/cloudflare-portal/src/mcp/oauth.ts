@@ -92,7 +92,7 @@ export function createAdminMcpOAuth(options: AdminMcpOAuthOptions) {
       } catch { return error("invalid_token", 401); }
     } },
     defaultHandler: { async fetch(request, env) {
-      if (!["/oauth/admin-mcp/authorize", "/oauth/admin-mcp/google/callback"].includes(new URL(request.url).pathname)) return error("invalid_request", 404);
+      if (new URL(request.url).pathname !== "/oauth/admin-mcp/authorize") return error("invalid_request", 404);
       if (!options.authorize || !env.OAUTH_PROVIDER) return error("temporarily_unavailable", 503);
       return options.authorize(request, env.OAUTH_PROVIDER);
     } },
@@ -159,12 +159,16 @@ export function createAdminMcpOAuth(options: AdminMcpOAuthOptions) {
         let authorizationCode: string | null = null;
         if (url.pathname === "/oauth/admin-mcp/authorize" && sanitized.method === "GET") {
           const params = url.searchParams;
+          if (params.has("resume")) {
+            if (params.size !== 1 || params.getAll("resume").length !== 1 || !/^[A-Za-z0-9_-]{43}$/.test(params.get("resume") ?? "")) return error("invalid_request");
+          } else {
           if ([...new Set(params.keys())].some(key => params.getAll(key).length !== 1)) return error("invalid_request");
           if (params.has("resource") && params.get("resource") !== resource) return error("invalid_target");
           if (params.get("response_type") !== "code" || params.get("code_challenge_method") !== "S256"
             || !/^[A-Za-z0-9_-]{43}$/.test(params.get("code_challenge") ?? "")) return error("invalid_request");
           const scopes = (params.get("scope") ?? "").split(" ").filter(Boolean);
           if (scopes.length === 0 || scopes.some(scope => !(ADMIN_MCP_SCOPES as readonly string[]).includes(scope))) return error("invalid_scope");
+          }
         }
         if (url.pathname === revokePath || url.pathname === tokenPath) {
           if (sanitized.method !== "POST") return error("invalid_request", 405);
