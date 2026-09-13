@@ -89,17 +89,19 @@ export class D1AdministratorRepository implements AdministratorRepository {
     }
   }
 
+  async replayRemove(context: AdminContext, key: string, fingerprint: string): Promise<boolean> {
+    await this.authorize(context);
+    const receipt = await this.database.prepare("SELECT fingerprint FROM portal_idempotency_receipts WHERE actor_id = ? AND operation = 'removeAdministratorMember' AND key = ?")
+      .bind(context.memberId, key).first<{ fingerprint: string }>();
+    if (!receipt) return false;
+    if (receipt.fingerprint !== fingerprint) throw new AdministratorOperationError("idempotency_conflict");
+    return true;
+  }
+
   async remove(command: AdministratorRemoveCommand): Promise<void> {
     const { context, adminId, key, fingerprint, expectedEtag, audit } = command;
     await this.authorize(context);
-    const replay = async () => {
-      await this.authorize(context);
-      const receipt = await this.database.prepare("SELECT fingerprint FROM portal_idempotency_receipts WHERE actor_id = ? AND operation = 'removeAdministratorMember' AND key = ?")
-        .bind(context.memberId, key).first<{ fingerprint: string }>();
-      if (!receipt) return false;
-      if (receipt.fingerprint !== fingerprint) throw new AdministratorOperationError("idempotency_conflict");
-      return true;
-    };
+    const replay = () => this.replayRemove(context, key, fingerprint);
     if (await replay()) return;
 
     const target = await this.database.prepare("SELECT * FROM portal_administrators WHERE member_id = ? AND active = 1").bind(adminId).first<MemberRow>();

@@ -1,5 +1,5 @@
 import { OAuthError, OAuthProvider, type OAuthHelpers, type TokenExchangeCallbackOptions } from "@cloudflare/workers-oauth-provider";
-import { ADMIN_MCP_SCOPES, normalizeAdministratorEmail, requireBoundAdministrator, validateAdminIdentity, type AdminIdentity, type AdminMcpMember, type VerifiedAdminMcpGrant } from "@unidocs/portal-service";
+import { ADMIN_MCP_SCOPES, normalizeAdministratorEmail, requireBoundAdministrator, validateAdminIdentity, type AdminIdentity, type AdminMcpMember, type AdminMcpScope, type VerifiedAdminMcpGrant } from "@unidocs/portal-service";
 import { dispatchAdminMcp } from "./dispatcher.js";
 import { consumeAdminMcpAuthorizationCode, consumeAdminMcpRefreshToken } from "./refresh-consumption.js";
 import type { D1Database } from "@cloudflare/workers-types";
@@ -20,6 +20,7 @@ export interface AdminMcpOAuthGrant {
 export interface AdminMcpOAuthOptions {
   readonly publicOrigin: string;
   readonly allowedEmails: readonly string[];
+  readonly resourceScopes?: readonly AdminMcpScope[];
   readonly findMember?: (memberId: string) => Promise<AdminMcpMember | null>;
   readonly now?: () => number;
   readonly authorize?: (request: Request, helpers: OAuthHelpers) => Promise<Response>;
@@ -66,6 +67,9 @@ export function createAdminMcpOAuth(options: AdminMcpOAuthOptions) {
   if (origin.origin !== options.publicOrigin || origin.protocol !== "https:") throw new Error("MCP requires a canonical HTTPS origin");
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const resource = `${origin.origin}/mcp`;
+  const resourceScopes = options.resourceScopes ?? ["admin:read"];
+  if (!resourceScopes.includes("admin:read") || new Set(resourceScopes).size !== resourceScopes.length
+    || resourceScopes.some(scope => !(ADMIN_MCP_SCOPES as readonly string[]).includes(scope))) throw new Error("Invalid MCP resource scopes");
   const tokenPath = "/oauth/admin-mcp/token";
   const revokePath = "/oauth/admin-mcp/revoke";
 
@@ -107,7 +111,7 @@ export function createAdminMcpOAuth(options: AdminMcpOAuthOptions) {
     allowTokenExchangeGrant: false,
     clientIdMetadataDocumentEnabled: false,
     scopesSupported: [...ADMIN_MCP_SCOPES],
-    resourceMetadata: { resource, authorization_servers: [origin.origin], scopes_supported: ["admin:read"], bearer_methods_supported: ["header"], resource_name: "UniDocs Admin Portal" },
+    resourceMetadata: { resource, authorization_servers: [origin.origin], scopes_supported: [...resourceScopes], bearer_methods_supported: ["header"], resource_name: "UniDocs Admin Portal" },
     clientRegistrationCallback: ({ clientMetadata }) => {
       if (clientMetadata.token_endpoint_auth_method !== "none"
         || clientMetadata.software_statement !== undefined

@@ -58,17 +58,19 @@ export class D1DocumentTypeRepository implements DocumentTypeRepository {
     }
   }
 
+  async replayUpdate(context: AdminContext, key: string, fingerprint: string) {
+    await this.authorize(context);
+    const receipt = await this.database.prepare("SELECT fingerprint, response_json FROM portal_idempotency_receipts WHERE actor_id = ? AND operation = 'updateDocumentType' AND key = ?")
+      .bind(context.memberId, key).first<{ fingerprint: string; response_json: string }>();
+    if (!receipt) return null;
+    if (receipt.fingerprint !== fingerprint) throw new AdminOperationError("idempotency_conflict");
+    return JSON.parse(receipt.response_json) as { documentType: string; etag: string };
+  }
+
   async update(command: DocumentTypeUpdateCommand) {
     const { context, key, fingerprint, expectedEtag, registration, audits } = command;
     await this.authorize(context);
-    const replay = async () => {
-      await this.authorize(context);
-      const receipt = await this.database.prepare("SELECT fingerprint, response_json FROM portal_idempotency_receipts WHERE actor_id = ? AND operation = 'updateDocumentType' AND key = ?")
-        .bind(context.memberId, key).first<{ fingerprint: string; response_json: string }>();
-      if (!receipt) return null;
-      if (receipt.fingerprint !== fingerprint) throw new AdminOperationError("idempotency_conflict");
-      return JSON.parse(receipt.response_json) as { documentType: string; etag: string };
-    };
+    const replay = () => this.replayUpdate(context, key, fingerprint);
     const previous = await replay();
     if (previous) return previous;
     const response = { documentType: registration.documentType, etag: registration.etag };

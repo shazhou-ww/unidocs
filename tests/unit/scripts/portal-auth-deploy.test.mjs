@@ -21,6 +21,11 @@ describe("Portal auth deployment preparation", () => {
     expect(config.secrets.required).toContain("GATEWAY_OIDC_CLIENT_SECRET");
     expect(config.secrets.required).toContain("OAUTH_STATE_ENCRYPTION_KEY");
     expect(config.vars.MCP_ENABLED).toBe("true");
+    expect(config.vars).toMatchObject({
+      MCP_CONTENT_MUTATIONS_ENABLED: "true",
+      MCP_PUBLISH_MUTATIONS_ENABLED: "true",
+      MCP_SECURITY_MUTATIONS_ENABLED: "true",
+    });
     expect(config.kv_namespaces).toEqual([{ binding: "OAUTH_KV", id: "dc729749e0ad46de981e99d10d29ffd1" }]);
   });
   test("uses an independent Worker and D1 with no public routes or copied secret values", () => {

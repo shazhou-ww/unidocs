@@ -19,6 +19,9 @@ test("Worker fails closed before touching D1 when Google credentials are absent"
       MCP_ENABLED: "false",
       MCP_PUBLIC_ORIGIN: "https://unidocs.shazhou.work",
       MCP_ADMIN_EMAIL_ALLOWLIST: "admin@example.com",
+      MCP_CONTENT_MUTATIONS_ENABLED: "false",
+      MCP_PUBLISH_MUTATIONS_ENABLED: "false",
+      MCP_SECURITY_MUTATIONS_ENABLED: "false",
       OAUTH_STATE_ENCRYPTION_KEY: "unused-disabled-fixture",
       get OAUTH_KV(): never { throw new Error("OAuth KV must not be touched"); },
     };
@@ -40,6 +43,7 @@ test.each(ADMIN_MCP_PATHS)("Worker MCP kill switch runs before Google credential
   const env: Env = {
     MCP_ENABLED: "false", MCP_PUBLIC_ORIGIN: "https://unidocs.shazhou.work",
     MCP_ADMIN_EMAIL_ALLOWLIST: "admin@example.com",
+    MCP_CONTENT_MUTATIONS_ENABLED: "false", MCP_PUBLISH_MUTATIONS_ENABLED: "false", MCP_SECURITY_MUTATIONS_ENABLED: "false",
     OAUTH_STATE_ENCRYPTION_KEY: "unused-disabled-fixture",
     get OAUTH_KV(): never { throw new Error("Unexpected OAuth KV access"); },
     get DB(): never { throw new Error("Unexpected D1 access"); },

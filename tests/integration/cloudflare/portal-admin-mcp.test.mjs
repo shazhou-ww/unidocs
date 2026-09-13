@@ -66,15 +66,17 @@ test("Admin MCP browser consent completes a real provider code exchange", async 
         import { handleAdminMcp } from './packages/cloudflare-portal/src/mcp/worker.ts';
         const origin = 'https://portal.test';
         const read = async () => ({ items: [], nextCursor: null });
-        const services = { documentTypes: { get: read, list: read }, documentContracts: { get: read, list: read }, typeCardBundles: { get: read, list: read }, viewBundles: { get: read, list: read }, operatorValidations: { get: read }, operators: { get: read, list: read }, administrators: { get: read, list: read }, auditEvents: { list: read } };
+        const mutate = async () => ({ ok: true });
+        const services = { documentTypes: { get: read, list: read }, documentContracts: { get: read, list: read, append: mutate }, typeCardBundles: { get: read, list: read, upload: mutate, updateMetadata: mutate }, viewBundles: { get: read, list: read, upload: mutate, updateMetadata: mutate }, operatorValidations: { get: read, validate: mutate }, operators: { get: read, list: read, create: mutate, updateMetadata: mutate }, administrators: { get: read, list: read }, auditEvents: { list: read } };
+        const policy = { enabled: true, contentMutationsEnabled: true, publishMutationsEnabled: false, securityMutationsEnabled: false };
         export default { async fetch(request, env, context) {
           const transactions = createAdminMcpAuthorizationTransactions({ database: env.DB, storage: env.OAUTH_KV, encryptionKey: env.STATE_KEY, publicOrigin: origin, now: () => 1800000000 });
           const members = new D1AdminMcpMembers(env.DB);
-          const provider = createAdminMcpOAuth({ publicOrigin: origin, allowedEmails: ['admin@example.com'], now: () => 1800000000,
+          const provider = createAdminMcpOAuth({ publicOrigin: origin, allowedEmails: ['admin@example.com'], resourceScopes: ['admin:read', 'admin:content'], now: () => 1800000000,
             authorize: (authorizationRequest, helpers) => createAdminMcpAuthorization({ publicOrigin: origin, helpers, transactions,
               authenticateSession: async request => { if (!(request.headers.get('cookie') ?? '').includes('__Host-unidocs_admin=session')) throw new Error('no session'); return { memberId: 'member', identity: { issuer: 'https://accounts.google.com', subject: 'subject', email: 'admin@example.com', authenticatedAt: 1800000000 } }; },
               findMember: memberId => members.findById(memberId), allowedEmails: ['admin@example.com'], now: () => 1800000000 })(authorizationRequest),
-            api: (apiRequest, grant) => handleAdminMcp(apiRequest, { ...env, BUNDLES: {}, BUNDLE_ORIGIN: 'https://bundles.test', ADMIN_MARKDOWN_SERVICE: { fetch: () => new Response(null, { status: 503 }) }, MARKDOWN_OPERATOR_HMAC_KEY: 'a'.repeat(64) }, context, grant, { publicOrigin: origin, allowedEmails: ['admin@example.com'], services, now: () => 1800000000 }),
+            api: (apiRequest, grant) => handleAdminMcp(apiRequest, { ...env, BUNDLES: {}, BUNDLE_ORIGIN: 'https://bundles.test', ADMIN_MARKDOWN_SERVICE: { fetch: () => new Response(null, { status: 503 }) }, MARKDOWN_OPERATOR_HMAC_KEY: 'a'.repeat(64) }, context, grant, { publicOrigin: origin, allowedEmails: ['admin@example.com'], services, policy, now: () => 1800000000 }),
           });
           return provider.fetch(request, env, context);
         } };`,
@@ -94,6 +96,7 @@ test("Admin MCP browser consent completes a real provider code exchange", async 
     }
     await database.prepare(`INSERT INTO portal_administrators (member_id, email, issuer, subject, added_by, created_at, updated_at)
       VALUES ('member', 'admin@example.com', 'https://accounts.google.com', 'subject', 'fixture', 1800000000, 1800000000)`).run();
+    expect(await (await runtime.dispatchFetch("https://portal.test/.well-known/oauth-protected-resource/mcp")).json()).toMatchObject({ scopes_supported: ["admin:read", "admin:content"] });
     const registration = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "GitHub Copilot", redirect_uris: ["http://127.0.0.1:43210/callback"], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }) });
     const client = await registration.json();
     const verifier = randomBytes(32).toString("base64url");
@@ -110,20 +113,22 @@ test("Admin MCP browser consent completes a real provider code exchange", async 
     const consentId = /name="consent_id" value="([^"]+)"/.exec(consentHtml)[1];
     const csrfToken = /name="csrf_token" value="([^"]+)"/.exec(consentHtml)[1];
     const consentCookie = consent.headers.getSetCookie().find(value => value.startsWith("__Host-unidocs_admin_mcp_consent=")).split(";", 1)[0];
-    const approved = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/authorize", { method: "POST", redirect: "manual", headers: { origin: "https://portal.test", cookie: consentCookie, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams([["consent_id", consentId], ["csrf_token", csrfToken], ["decision", "approve"], ["scope", "admin:read"]]).toString() });
+    const approved = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/authorize", { method: "POST", redirect: "manual", headers: { origin: "https://portal.test", cookie: consentCookie, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams([["consent_id", consentId], ["csrf_token", csrfToken], ["decision", "approve"], ["scope", "admin:read"], ["scope", "admin:content"]]).toString() });
     expect(approved.status).toBe(302);
     const code = new URL(approved.headers.get("location")).searchParams.get("code");
     const exchanged = await runtime.dispatchFetch("https://portal.test/oauth/admin-mcp/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: client.client_id, redirect_uri: client.redirect_uris[0], grant_type: "authorization_code", code, code_verifier: verifier, resource: "https://portal.test/mcp" }).toString() });
     expect(exchanged.status).toBe(200);
     const tokens = await exchanged.json();
-    expect(tokens).toMatchObject({ access_token: expect.any(String), token_type: "bearer", scope: "admin:read" });
+    expect(tokens).toMatchObject({ access_token: expect.any(String), token_type: "bearer", scope: "admin:read admin:content" });
     const mcp = async (method, params) => runtime.dispatchFetch("https://portal.test/mcp", { method: "POST", headers: { authorization: `Bearer ${tokens.access_token}`, accept: "application/json, text/event-stream", "content-type": "application/json", "mcp-protocol-version": "2026-07-28", "mcp-method": method, ...(params.name ? { "mcp-name": params.name } : {}) }, body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method, params: { ...params, _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientInfo": { name: "integration", version: "1.0.0" }, "io.modelcontextprotocol/clientCapabilities": {} } } }) });
     const listedResponse = await mcp("tools/list", {});
     expect(listedResponse.status, await listedResponse.clone().text()).toBe(200);
     const listed = await listedResponse.json();
-    expect(listed.result.tools.map(tool => tool.name)).toHaveLength(15);
+    expect(listed.result.tools.map(tool => tool.name)).toHaveLength(23);
     const whoami = await (await mcp("tools/call", { name: "whoami", arguments: {} })).json();
-    expect(whoami.result.structuredContent).toMatchObject({ memberId: "member", identity: { email: "admin@example.com" }, scopes: ["admin:read"] });
+    expect(whoami.result.structuredContent).toMatchObject({ memberId: "member", identity: { email: "admin@example.com" }, scopes: ["admin:read", "admin:content"] });
+    const appended = await (await mcp("tools/call", { name: "append_document_contract", arguments: { documentType: "markdown", idempotencyKey: "integration-append-1", formatVersion: 1, snapshot: { schema: { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" } }, location: { schema: { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" } }, reason: "Integration contract" } })).json();
+    expect(appended.result).toMatchObject({ structuredContent: { ok: true } });
   } finally {
     await runtime.dispose();
   }

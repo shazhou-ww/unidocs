@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { AdminMcpInputSchemas } from "@unidocs/protocol-admin-portal";
 import {
-  ADMIN_MCP_CATALOG, resolveAdminMcpContext,
-  type AdminContext, type AdminMcpMember, type AdminMcpToolName, type VerifiedAdminMcpGrant,
+  ADMIN_MCP_CATALOG, adminMcpZipStream, requireAdminMcpDocumentTypeConfirmation, requireAdminMcpRemovalConfirmation, resolveAdminMcpContext,
+  type AdminContext, type AdminMcpMember, type AdminMcpPolicy, type AdminMcpToolName, type VerifiedAdminMcpGrant,
   type createAdministratorService, type createAuditEventService, type createDocumentContractService, type createDocumentTypeService,
   type createOperatorService, type createOperatorValidationService, type createTypeCardBundleService, type createViewBundleService,
 } from "@unidocs/portal-service";
@@ -14,11 +14,13 @@ export function createAdminMcpServer(options: {
   readonly allowedEmails: readonly string[];
   readonly findMember: (memberId: string) => Promise<AdminMcpMember | null>;
   readonly services?: AdminMcpReadServices;
+  readonly policy?: AdminMcpPolicy;
   readonly now?: () => number;
 }): McpServer {
   const server = new McpServer({ name: "unidocs-admin", version: "0.1.0" });
+  const policy = options.policy ?? readOnlyPolicy;
   const context = (toolName: AdminMcpToolName) => resolveAdminMcpContext({
-    verifiedGrant: options.grant, toolName, policy: readOnlyPolicy, allowedEmails: options.allowedEmails,
+    verifiedGrant: options.grant, toolName, policy, allowedEmails: options.allowedEmails,
     now: (options.now ?? (() => Math.floor(Date.now() / 1000)))(), findMember: options.findMember,
   });
   const run = async (toolName: AdminMcpToolName, operation: (admin: AdminContext) => Promise<unknown>) => {
@@ -63,17 +65,85 @@ export function createAdminMcpServer(options: {
   server.registerTool("list_administrators", definition("List administrators", "List UniDocs administrators.", "list_administrators"), input => run("list_administrators", admin => services.administrators.list(admin, input)));
   server.registerTool("get_administrator", definition("Get administrator", "Get one UniDocs administrator and ETag.", "get_administrator"), input => run("get_administrator", admin => services.administrators.get(admin, input.adminId)));
   server.registerTool("list_admin_audit_events", definition("List admin audit events", "List administrator mutation audit events.", "list_admin_audit_events"), input => run("list_admin_audit_events", admin => services.auditEvents.list(admin, input)));
+  if (policy.contentMutationsEnabled && services.documentContracts.append) {
+    server.registerTool("append_document_contract", definition("Append document contract", "Append the next immutable contract revision for a document type.", "append_document_contract"), input => run("append_document_contract", admin => {
+      const { documentType, idempotencyKey, ...body } = input;
+      return services.documentContracts.append!(admin, documentType, body, idempotencyKey, crypto.randomUUID());
+    }));
+  }
+  if (policy.contentMutationsEnabled && services.typeCardBundles?.upload && services.typeCardBundles.updateMetadata
+    && services.viewBundles?.upload && services.viewBundles.updateMetadata && services.operatorValidations?.validate
+    && services.operators?.create && services.operators.updateMetadata) {
+    server.registerTool("upload_type_card_bundle", definition("Upload Type Card bundle", "Upload a base64 ZIP as a Type Card candidate.", "upload_type_card_bundle"), input => run("upload_type_card_bundle", admin => {
+      const { idempotencyKey, base64Zip, ...query } = input;
+      return services.typeCardBundles.upload!(admin, query, adminMcpZipStream(base64Zip), idempotencyKey, crypto.randomUUID());
+    }));
+    server.registerTool("update_type_card_bundle_metadata", definition("Update Type Card metadata", "Replace a Type Card candidate name and description using its current ETag.", "update_type_card_bundle_metadata"), input => run("update_type_card_bundle_metadata", admin => {
+      const { typeCardBundleId, idempotencyKey, etag, ...body } = input;
+      return services.typeCardBundles.updateMetadata!(admin, typeCardBundleId, body, idempotencyKey, etag, crypto.randomUUID());
+    }));
+    server.registerTool("upload_view_bundle", definition("Upload View bundle", "Upload a base64 ZIP as a View candidate.", "upload_view_bundle"), input => run("upload_view_bundle", admin => {
+      const { idempotencyKey, base64Zip, ...query } = input;
+      return services.viewBundles.upload!(admin, query, adminMcpZipStream(base64Zip), idempotencyKey, crypto.randomUUID());
+    }));
+    server.registerTool("update_view_bundle_metadata", definition("Update View metadata", "Replace a View candidate name and description using its current ETag.", "update_view_bundle_metadata"), input => run("update_view_bundle_metadata", admin => {
+      const { viewBundleId, idempotencyKey, etag, ...body } = input;
+      return services.viewBundles.updateMetadata!(admin, viewBundleId, body, idempotencyKey, etag, crypto.randomUUID());
+    }));
+    server.registerTool("create_operator_validation", definition("Validate Operator", "Discover and probe the deployed first-party Operator candidate.", "create_operator_validation"), input => run("create_operator_validation", admin => {
+      const { idempotencyKey, ...body } = input;
+      return services.operatorValidations.validate!(admin, body, idempotencyKey, crypto.randomUUID());
+    }));
+    server.registerTool("create_operator", definition("Create Operator", "Persist a candidate from a current successful validation.", "create_operator"), input => run("create_operator", admin => {
+      const { idempotencyKey, ...body } = input;
+      return services.operators.create!(admin, body, idempotencyKey, crypto.randomUUID());
+    }));
+    server.registerTool("update_operator_metadata", definition("Update Operator metadata", "Replace an Operator candidate name and description using its current ETag.", "update_operator_metadata"), input => run("update_operator_metadata", admin => {
+      const { operatorId, idempotencyKey, etag, ...body } = input;
+      return services.operators.updateMetadata!(admin, operatorId, body, idempotencyKey, etag, crypto.randomUUID());
+    }));
+  }
+  if (policy.publishMutationsEnabled && services.documentTypes.create) {
+    server.registerTool("create_document_type", definition("Create document type", "Create a new disabled document type draft.", "create_document_type"), input => run("create_document_type", admin => {
+      const { idempotencyKey, ...body } = input;
+      return services.documentTypes.create!(admin, body, idempotencyKey, crypto.randomUUID());
+    }));
+  }
+  if (policy.publishMutationsEnabled && services.documentTypes.update && services.documentTypes.replayUpdate) {
+    server.registerTool("update_document_type", definition("Update document type", "Update a document type registration using its current ETag and explicit confirmations.", "update_document_type"), input => run("update_document_type", async admin => {
+      const { documentType, idempotencyKey, etag, confirmEnabled: _confirmEnabled, confirmOperatorId: _confirmOperatorId, ...body } = input;
+      const replay = await services.documentTypes.replayUpdate!(admin, documentType, body, idempotencyKey, etag);
+      if (replay) return replay;
+      requireAdminMcpDocumentTypeConfirmation(input, await services.documentTypes.get(admin, documentType));
+      return services.documentTypes.update!(admin, documentType, body, idempotencyKey, etag, crypto.randomUUID());
+    }));
+  }
+  if (policy.securityMutationsEnabled && services.administrators.add) {
+    server.registerTool("add_administrator", definition("Add administrator", "Invite a Google account as a UniDocs administrator.", "add_administrator"), input => run("add_administrator", admin => {
+      const { idempotencyKey, confirmEmail: _confirmEmail, ...body } = input;
+      return services.administrators.add!(admin, body, idempotencyKey, crypto.randomUUID());
+    }));
+  }
+  if (policy.securityMutationsEnabled && services.administrators.remove && services.administrators.replayRemove) {
+    server.registerTool("remove_administrator", definition("Remove administrator", "Remove an administrator using its current ETag and explicit identity confirmations.", "remove_administrator"), input => run("remove_administrator", async admin => {
+      const { adminId, idempotencyKey, etag, confirmAdminId: _confirmAdminId, confirmEmail: _confirmEmail } = input;
+      if (await services.administrators.replayRemove!(admin, adminId, idempotencyKey, etag)) return { adminId };
+      requireAdminMcpRemovalConfirmation(input, await services.administrators.get(admin, adminId));
+      await services.administrators.remove!(admin, adminId, idempotencyKey, etag, crypto.randomUUID());
+      return { adminId };
+    }));
+  }
   return server;
 }
 
 export interface AdminMcpReadServices {
-  readonly documentTypes: Pick<ReturnType<typeof createDocumentTypeService>, "get" | "list">;
-  readonly documentContracts: Pick<ReturnType<typeof createDocumentContractService>, "get" | "list">;
-  readonly typeCardBundles: Pick<ReturnType<typeof createTypeCardBundleService>, "get" | "list">;
-  readonly viewBundles: Pick<ReturnType<typeof createViewBundleService>, "get" | "list">;
-  readonly operatorValidations: Pick<ReturnType<typeof createOperatorValidationService>, "get">;
-  readonly operators: Pick<ReturnType<typeof createOperatorService>, "get" | "list">;
-  readonly administrators: Pick<ReturnType<typeof createAdministratorService>, "get" | "list">;
+  readonly documentTypes: Pick<ReturnType<typeof createDocumentTypeService>, "get" | "list"> & Partial<Pick<ReturnType<typeof createDocumentTypeService>, "create" | "replayUpdate" | "update">>;
+  readonly documentContracts: Pick<ReturnType<typeof createDocumentContractService>, "get" | "list"> & Partial<Pick<ReturnType<typeof createDocumentContractService>, "append">>;
+  readonly typeCardBundles: Pick<ReturnType<typeof createTypeCardBundleService>, "get" | "list"> & Partial<Pick<ReturnType<typeof createTypeCardBundleService>, "upload" | "updateMetadata">>;
+  readonly viewBundles: Pick<ReturnType<typeof createViewBundleService>, "get" | "list"> & Partial<Pick<ReturnType<typeof createViewBundleService>, "upload" | "updateMetadata">>;
+  readonly operatorValidations: Pick<ReturnType<typeof createOperatorValidationService>, "get"> & Partial<Pick<ReturnType<typeof createOperatorValidationService>, "validate">>;
+  readonly operators: Pick<ReturnType<typeof createOperatorService>, "get" | "list"> & Partial<Pick<ReturnType<typeof createOperatorService>, "create" | "updateMetadata">>;
+  readonly administrators: Pick<ReturnType<typeof createAdministratorService>, "get" | "list"> & Partial<Pick<ReturnType<typeof createAdministratorService>, "add" | "replayRemove" | "remove">>;
   readonly auditEvents: Pick<ReturnType<typeof createAuditEventService>, "list">;
 }
 
@@ -88,7 +158,7 @@ function objectResult(value: unknown): Record<string, unknown> {
 function errorCode(error: unknown): string {
   if (typeof error === "object" && error !== null && "code" in error) {
     const code = (error as { code?: unknown }).code;
-    if (["invalid_request", "not_found", "forbidden", "precondition_failed"].includes(String(code))) return String(code);
+    if (["invalid_request", "not_found", "forbidden", "precondition_failed", "idempotency_conflict", "operator_validation_required", "operator_validation_failed", "administrator_exists", "cannot_remove_self", "last_administrator"].includes(String(code))) return String(code);
   }
   return "internal_error";
 }

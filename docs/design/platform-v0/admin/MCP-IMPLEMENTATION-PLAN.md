@@ -1,6 +1,6 @@
 # UniDocs Admin Portal MCP 实现计划
 
-状态：read-only canary 已部署并完成 VS Code OAuth 与 read tools 真人验收（15 个 read tools、加密 transaction、成员重查与 code/refresh 单次消费已实现；refresh/revoke 与成员移除验收待完成）
+状态：27 个 tools 均已实现，content、publish 与 security mutation canary 已完成生产验收；移除现有 bound 管理员后的 grant 即时失效仍待受控演练
 
 日期：2026-09-12  
 范围：为已上线的 26-operation Admin Portal 增加 OAuth 2.1 保护的 remote MCP；不改变 Tenant/Document 数据面，不把 UniCAS 作为运行时依赖。
@@ -443,6 +443,20 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 - 最终生产版本 `1d5c4ac6-a17b-4454-843d-b6ef1aef66d4` 已由 VS Code 完成 consent、302 callback 与 token exchange；production D1 聚合确认最近 authorization code exchange 为 1。此前聊天中暴露的浏览器 session/CSRF/consent cookie 必须通过退出 Admin 并重新登录作废，不作为任何验收凭据。
 - VS Code opaque-origin 兼容补丁允许 `Origin: null + Sec-Fetch-Site: same-origin` 的 consent POST，并将 OAuthProvider 已验证的 client redirect HTTPS/loopback origin 或 `vscode:` scheme 加入该 consent 页 `form-action`；`null + cross-site`、任意公网 HTTP 与未知 scheme 仍拒绝。相关版本依次为 `90c30bf4-e627-44ca-998e-4d872d88cac1`、`d715d2b4-d809-42d3-aa76-140e2d678f14`，当前生产 callback CSP 修复版本为 `1d5c4ac6-a17b-4454-843d-b6ef1aef66d4`。真人重试已连接成功。
 - 生产 MCP 真人调用已通过：`whoami` 返回当前 bound member、`admin:read` 与 client handle；`list_document_types` 返回当前 Markdown 注册；`list_administrators` 返回两名 bound 管理员并正确标记 self；`get_administrator` 返回 ETag；`list_operators` 返回合法空分页。未在文档中保存 bearer token、Google token 或 cookie。
+- Phase 2 代码已增加全部 8 个 content tools、三类 mutation kill switch 与按开关收窄的 protected-resource scope 广告。关闭态版本 `dcc1191f-851b-4e50-9ddc-4d789b975d90` 已部署，三个 mutation switch 均为 `false`；生产 metadata 仍只广告 `admin:read`，现有 `whoami` 与 read list 回归通过。尚未签发 `admin:content` grant 或执行生产 mutation。
+- content canary 版本 `a78aafb8-90b6-4788-84ed-ec45f09fa40c` 已部署：`MCP_CONTENT_MUTATIONS_ENABLED=true`，publish/security 均为 `false`；精确 protected-resource metadata 两次确认广告 `admin:read` 与 `admin:content`。VS Code 已重新授权两个 scope，生产 `whoami` 返回二者；当前聊天缓存旧 tool registry，需新聊天加载 23-tool catalog 后执行生产 mutation、idempotency replay 与 MCP audit 验收。现有 contract 基线仅 revision 0，MCP audit 基线为空。
+- 当前聊天随后加载 23-tool catalog并完成生产 content canary：`create_operator_validation` 成功验证一方 Markdown Service Binding；相同 key 重放返回同一 validationId 且仅一条 `operator.validation_passed` audit。`create_operator` 创建未绑定候选并成功重放；`update_operator_metadata` 使用调用方旧 ETag 更新后，相同 key/旧 ETag 仍重放首次结果，证明 receipt replay 未被当前 ETag 变化破坏。三类 audit 均记录 `callerChannel=mcp`、client handle 与准确 toolName。bundle upload replay 尚未真人验收。
+- Phase 3/4 的 4 个 tools 已全部接入，分别受 publish/security 开关和 scope 控制；生产两开关保持关闭。`update_document_type` 与 `remove_administrator` adapter 先按 idempotency key 与完整 fingerprint 查询 receipt，未命中才读取当前资源并校验 ETag、目标身份与显式确认，因此成功后的旧 ETag 重试不会被当前状态提前拒绝。
+- 部署前本地验证覆盖 receipt 命中时不读取已变化或已删除资源、stale ETag、错误管理员邮箱确认及稳定安全错误脱敏。Cloudflare Portal 包测试 11 个文件共 236 项、MCP server 8 项、document type/administrator service 25 项及 Cloudflare Portal typecheck 通过；publish/security 未开启。
+- 完整 27-tool 实现已随生产版本 `49611311-b321-4417-97df-6192fcf74678` 部署，但 `MCP_PUBLISH_MUTATIONS_ENABLED=false`、`MCP_SECURITY_MUTATIONS_ENABLED=false`，因此 protected-resource metadata 与现有 grant 仍只有 `admin:read admin:content`。部署后 Admin 登录、bundle 404、MCP 401 challenge、两份 OAuth metadata、未知 OAuth path、authenticated `whoami` 与 `list_document_types` smoke 均通过。
+- 发布前修复 `build:webui` 未先构建 workspace client/protocol 生产 exports 的问题；生产 Wrangler dry-run、23 项 MCP workerd 集成、236 项 Portal 包测试、18 项部署配置/Worker 测试、typecheck 与 `git diff --check` 通过。正式开启 publish/security 前仍需分别重新授权并完成对应生产 mutation 验收。
+- Publish canary 已随生产版本 `e60722a1-2a3c-46c1-9ab3-b378ffb3b65c` 开启：`MCP_CONTENT_MUTATIONS_ENABLED=true`、`MCP_PUBLISH_MUTATIONS_ENABLED=true`、`MCP_SECURITY_MUTATIONS_ENABLED=false`。protected-resource metadata 与无凭据 challenge 已确认只广告 read/content/publish；旧 grant 未自动扩权，`whoami` 仍只有 read/content。当前 document type 有 revision 0 contract 但没有 Type Card/View/Operator 绑定，因此本轮先验收 internal-name 更新/恢复、receipt replay 与 stale ETag 412，不在 readiness 不足时尝试 enable。VS Code 需由用户重新完成 consent，并在新聊天加载 25-tool catalog 后继续；尚无 `update_document_type` MCP audit。
+- VS Code 重新 consent 后 `whoami` 返回 read/content/publish，25-tool catalog 已加载。`update_document_type` 完成 internal-name 更新与恢复；相同 key/旧 ETag 返回首次 receipt，不同 key/旧 ETag 稳定返回 `precondition_failed`，两次实际变更恰好产生两条归因完整的 audit。
+- 生产上传并重放了 837-byte Type Card 与 718-byte View canary ZIP；同 key 重放返回相同 content-derived ID/ETag，各只有一条 uploaded audit。immutable bundle origin 的 SVG、WebP 与两个 HTML entrypoint 均返回正确 MIME、长缓存、CORP、nosniff；View CSP 包含精确 asset root、Portal frame ancestor 与 sandbox。
+- 将 Type Card、View 与已验证支持 contract 0 的 Markdown Operator 绑定到现有类型后，enable/disable 均以显式 `confirmEnabled` 和 reason 成功。缺少 readiness 时的 enable 先被 `invalid_request` 拒绝；成功 enable 的原 key 在后续 disable 后仍只回放旧 receipt，没有重新启用或新增 audit。最终 Markdown 类型保持 `enabled=false`，保留三类已验证候选绑定；另有一个明确命名且保持 disabled 的 canary draft `dt-1ffa9cb0-1ed5-4a73-9750-05cb1a2535db`。
+- Security canary 已随生产版本 `b4a44161-dd20-4878-833e-e51766c65f8b` 开启，三个 mutation switches 均为 true；protected-resource metadata 与无凭据 challenge 已确认广告全部四个 scopes。旧 grant 未自动扩权，`whoami` 仍只有 read/content/publish，当前聊天仍是 25-tool catalog。需由用户重新 consent 并在新聊天加载 27-tool catalog 后，使用唯一未绑定 canary 邮箱验证 add/remove replay、双确认、self-removal 拒绝与 audit；不移除现有另一名 bound 管理员。
+- 重新 consent 后 `whoami` 返回全部四个 scopes，27-tool catalog 已加载。使用保留域唯一邮箱创建未绑定 canary 管理员，同 key replay 返回相同 adminId/ETag；错误邮箱确认返回 `invalid_request` 且资源保持不变。正确双确认删除后，同 key/旧 ETag 在资源已不可查询时仍成功 replay，证明 receipt-first 顺序生效。
+- add/remove 各恰好产生一条归因完整的 MCP audit；失败确认、replay 与 self-removal 拒绝均未增加 audit。使用当前管理员的真实 ETag 与双确认执行 self-removal，稳定返回 `cannot_remove_self`，随后 `whoami` 与管理员列表确认当前 grant 和原两名 bound 管理员均未受影响。未移除另一名真实 bound 管理员，因此“移除成员后其现有 grant 立即失效”的生产演练仍未完成；成员重查和移除/重新邀请语义已有真实 D1/workerd 集成覆盖。
 
 退出条件：没有未决项会改变 OAuth audience、scope 名、audit schema 或 tool 名。
 
@@ -465,23 +479,23 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 
 ### Phase 2：content mutation
 
-- [ ] 接入 8 个 `admin:content` tools；
-- [ ] 显式 idempotency key、ETag 与 base64 ZIP 边界；
-- [ ] 开启 `MCP_CONTENT_MUTATIONS_ENABLED` canary；
-- [ ] 验证一次 validation→Operator candidate、metadata PATCH、bundle upload replay 与 audit attribution。
+- [x] 接入 8 个 `admin:content` tools；
+- [x] 显式 idempotency key、ETag 与 base64 ZIP 边界；
+- [x] 开启并真人授权 `MCP_CONTENT_MUTATIONS_ENABLED` canary；
+- [x] 验证 bundle upload replay（validation→Operator candidate、metadata PATCH、幂等 replay 与 audit attribution 已通过）。
 
 ### Phase 3：publish mutation
 
-- [ ] 接入 create/update document type；
-- [ ] 强制 reason、confirmEnabled、resource compatibility 与完整 ETag；
-- [ ] 开启 `MCP_PUBLISH_MUTATIONS_ENABLED`；
-- [ ] 验证绑定候选、启用、停用和 412 恢复流程。
+- [x] 接入 create/update document type；
+- [x] 强制 reason、confirmEnabled、resource compatibility 与完整 ETag；
+- [x] 开启 `MCP_PUBLISH_MUTATIONS_ENABLED`；
+- [x] 验证绑定候选、启用、停用和 412 恢复流程。
 
 ### Phase 4：admin security mutation
 
-- [ ] 接入 add/remove administrator；
-- [ ] 双确认、不可自删、最后管理员保护继续由 service/repository 强制；
-- [ ] 单独开启 `MCP_SECURITY_MUTATIONS_ENABLED`；
+- [x] 接入 add/remove administrator；
+- [x] 双确认、不可自删、最后管理员保护继续由 service/repository 强制；
+- [x] 单独开启 `MCP_SECURITY_MUTATIONS_ENABLED`；
 - [ ] 实测移除成员即时使其 MCP grant 不可用。
 
 ### Phase 5：发布门禁与运维

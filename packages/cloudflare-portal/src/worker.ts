@@ -27,6 +27,7 @@ import { createAdminMcpAuthorizationTransactions } from "./mcp/authorization-tra
 import { createAdminMcpAuthorization } from "./mcp/authorization.js";
 import { D1AdminMcpMembers } from "./mcp/members.js";
 import { handleAdminMcp } from "./mcp/worker.js";
+import type { AdminMcpScope } from "@unidocs/portal-service";
 
 export default {
   async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
@@ -39,8 +40,20 @@ export default {
         const { createAdminMcpOAuth } = await import("./mcp/oauth.js");
         const members = new D1AdminMcpMembers(env.DB);
         const allowedEmails = env.MCP_ADMIN_EMAIL_ALLOWLIST.split(",").map(value => value.trim()).filter(Boolean);
+        const policy = {
+          enabled: true,
+          contentMutationsEnabled: env.MCP_CONTENT_MUTATIONS_ENABLED === "true",
+          publishMutationsEnabled: env.MCP_PUBLISH_MUTATIONS_ENABLED === "true",
+          securityMutationsEnabled: env.MCP_SECURITY_MUTATIONS_ENABLED === "true",
+        };
+        const resourceScopes: AdminMcpScope[] = [
+          "admin:read",
+          ...(policy.contentMutationsEnabled ? ["admin:content" as const] : []),
+          ...(policy.publishMutationsEnabled ? ["admin:publish" as const] : []),
+          ...(policy.securityMutationsEnabled ? ["admin:security" as const] : []),
+        ];
         const provider = createAdminMcpOAuth({
-          publicOrigin: env.MCP_PUBLIC_ORIGIN, allowedEmails,
+          publicOrigin: env.MCP_PUBLIC_ORIGIN, allowedEmails, resourceScopes,
           authorize: (authorizationRequest, helpers) => {
             const authRepository = new D1PortalAuthRepository(env.DB);
             const transactions = createAdminMcpAuthorizationTransactions({
@@ -57,7 +70,7 @@ export default {
               findMember: memberId => members.findById(memberId), allowedEmails,
             })(authorizationRequest);
           },
-          api: (apiRequest, grant) => handleAdminMcp(apiRequest, env, context, grant, { publicOrigin: env.MCP_PUBLIC_ORIGIN, allowedEmails }),
+          api: (apiRequest, grant) => handleAdminMcp(apiRequest, env, context, grant, { publicOrigin: env.MCP_PUBLIC_ORIGIN, allowedEmails, policy }),
         });
         mcpResponse = await provider.fetch(request, env, context, true);
       } else if (!mcpEnabled) {

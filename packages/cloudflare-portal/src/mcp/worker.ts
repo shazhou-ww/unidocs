@@ -1,5 +1,5 @@
 import { createMcpHandler } from "agents/mcp/server";
-import type { VerifiedAdminMcpGrant } from "@unidocs/portal-service";
+import type { AdminMcpPolicy, VerifiedAdminMcpGrant } from "@unidocs/portal-service";
 import {
   createAdministratorService, createAuditEventService, createDocumentContractService, createDocumentTypeService,
   createOperatorService, createOperatorValidationService, createTypeCardBundleService, createViewBundleService,
@@ -30,6 +30,7 @@ interface AdminMcpRuntimeEnv extends AdminMcpOAuthEnv {
 export async function handleAdminMcp(request: Request, env: AdminMcpRuntimeEnv, context: ExecutionContext, grant: VerifiedAdminMcpGrant, options: {
   readonly publicOrigin: string;
   readonly allowedEmails: readonly string[];
+  readonly policy?: AdminMcpPolicy;
   readonly services?: AdminMcpReadServices;
   readonly now?: () => number;
 }): Promise<Response> {
@@ -63,7 +64,7 @@ export async function handleAdminMcp(request: Request, env: AdminMcpRuntimeEnv, 
   };
   const handler = createMcpHandler(() => createAdminMcpServer({
     grant, allowedEmails: options.allowedEmails, findMember: memberId => members.findById(memberId), now: options.now,
-    services,
+    services, policy: options.policy,
   }), { route: "/mcp", allowedOriginHostnames: [new URL(options.publicOrigin).hostname], authContext: { props: authProps } });
   return handler(request, env, context);
 }

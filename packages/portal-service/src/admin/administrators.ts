@@ -44,6 +44,7 @@ export interface AdministratorRemoveCommand {
 
 export interface AdministratorRepository {
   add(command: AdministratorAddCommand): Promise<{ readonly adminId: string; readonly etag: string }>;
+  replayRemove(context: AdminContext, key: string, fingerprint: string): Promise<boolean>;
   remove(command: AdministratorRemoveCommand): Promise<void>;
   get(context: AdminContext, adminId: string): Promise<AdministratorMemberRecord | null>;
   list(context: AdminContext, query: { readonly cursor?: string; readonly limit?: number }): Promise<ListAdministratorMembersResponse>;
@@ -91,6 +92,13 @@ export function createAdministratorService(repository: AdministratorRepository, 
       const member = await repository.get(context, adminId);
       if (!member) throw new AdministratorOperationError("not_found");
       return member;
+    },
+    async replayRemove(context: AdminContext, adminId: string, key: string, expectedEtag: string) {
+      if (typeof adminId !== "string" || !adminId || adminId.length > 256
+        || !/^[\x20-\x7e]{1,128}$/.test(key) || !/^"sha256-[A-Za-z0-9_-]{43}"$/.test(expectedEtag)) {
+        throw new AdministratorOperationError("invalid_request");
+      }
+      return repository.replayRemove(context, key, await schemaHash({ operation: "removeAdministratorMember", adminId, expectedEtag }));
     },
     async remove(context: AdminContext, adminId: string, key: string, expectedEtag: string, requestId: string) {
       if (typeof adminId !== "string" || !adminId || adminId.length > 256
