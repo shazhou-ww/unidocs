@@ -48,6 +48,8 @@ test("accepts a restricted SVG and rejects active or external content", () => {
 test("parses minimal JPEG and WebP dimensions", () => {
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0, 8, 8, 0, 10, 0, 20, 3, 0xff, 0xda, 0, 2, 0xff, 0xd9]);
   expect(inspectTypeCardAsset("sample.jpg", jpeg)).toEqual({ contentType: "image/jpeg", width: 20, height: 10 });
-  const webp = new Uint8Array(30); webp.set(new TextEncoder().encode("RIFF")); new DataView(webp.buffer).setUint32(4, 22, true); webp.set(new TextEncoder().encode("WEBPVP8X"), 8); new DataView(webp.buffer).setUint32(16, 10, true); webp[24] = 19; webp[27] = 9;
-  expect(inspectTypeCardAsset("sample.webp", webp)).toEqual({ contentType: "image/webp", width: 20, height: 10 });
+  const headerOnly = new Uint8Array(30); headerOnly.set(new TextEncoder().encode("RIFF")); new DataView(headerOnly.buffer).setUint32(4, 22, true); headerOnly.set(new TextEncoder().encode("WEBPVP8X"), 8); new DataView(headerOnly.buffer).setUint32(16, 10, true); headerOnly[24] = 19; headerOnly[27] = 9;
+  expect(() => inspectTypeCardAsset("sample.webp", headerOnly)).toThrow();
+  const webp = Uint8Array.from(Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA", "base64"));
+  expect(inspectTypeCardAsset("sample.webp", webp)).toEqual({ contentType: "image/webp", width: 1, height: 1 });
 });

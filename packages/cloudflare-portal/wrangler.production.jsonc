@@ -2,6 +2,9 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "unidocs-portal",
   "main": "src/worker.ts",
+  "build": {
+    "command": "pnpm run build:webui"
+  },
   "compatibility_date": "2026-09-10",
   "compatibility_flags": [
     "nodejs_compat"

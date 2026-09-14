@@ -88,23 +88,23 @@ function webpInfo(bytes: Uint8Array): TypeCardAssetInfo {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint32(4, true) + 8 !== bytes.length) throw new BundleZipError();
   let offset = 12;
+  let extendedSize: { width: number; height: number } | null = null;
   while (offset + 8 <= bytes.length) {
     const type = ascii(bytes, offset, 4);
     const length = view.getUint32(offset + 4, true);
     const data = offset + 8;
     if (data + length > bytes.length) throw new BundleZipError();
-    if (type === "VP8X" && length >= 10) {
-      const size = dimensions(1 + bytes[data + 4] + (bytes[data + 5] << 8) + (bytes[data + 6] << 16), 1 + bytes[data + 7] + (bytes[data + 8] << 8) + (bytes[data + 9] << 16));
-      return { contentType: "image/webp", ...size };
+    if (type === "VP8X" && length === 10) {
+      extendedSize = dimensions(1 + bytes[data + 4] + (bytes[data + 5] << 8) + (bytes[data + 6] << 16), 1 + bytes[data + 7] + (bytes[data + 8] << 8) + (bytes[data + 9] << 16));
     }
-    if (type === "VP8L" && length >= 5 && bytes[data] === 0x2f) {
+    if (type === "VP8L" && length > 5 && bytes[data] === 0x2f) {
       const bits = view.getUint32(data + 1, true);
       const size = dimensions((bits & 0x3fff) + 1, ((bits >>> 14) & 0x3fff) + 1);
-      return { contentType: "image/webp", ...size };
+      return { contentType: "image/webp", ...(extendedSize ?? size) };
     }
-    if (type === "VP8 " && length >= 10 && bytes[data + 3] === 0x9d && bytes[data + 4] === 0x01 && bytes[data + 5] === 0x2a) {
+    if (type === "VP8 " && length > 10 && bytes[data + 3] === 0x9d && bytes[data + 4] === 0x01 && bytes[data + 5] === 0x2a) {
       const size = dimensions(view.getUint16(data + 6, true) & 0x3fff, view.getUint16(data + 8, true) & 0x3fff);
-      return { contentType: "image/webp", ...size };
+      return { contentType: "image/webp", ...(extendedSize ?? size) };
     }
     offset = data + length + (length % 2);
   }

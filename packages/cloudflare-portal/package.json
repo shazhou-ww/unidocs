@@ -10,7 +10,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build:webui": "pnpm --filter '@unidocs/admin-portal-webui^...' --filter '@unidocs/tenant-portal-webui^...' build && pnpm --filter @unidocs/admin-portal-webui build && pnpm --filter @unidocs/tenant-portal-webui build && node scripts/build-ui-assets.mjs",
+    "build:webui": "pnpm --filter \"@unidocs/admin-portal-webui^...\" --filter \"@unidocs/tenant-portal-webui^...\" build && pnpm --filter @unidocs/admin-portal-webui build && pnpm --filter @unidocs/tenant-portal-webui build && node scripts/build-ui-assets.mjs",
     "types:generate": "wrangler types src/env.generated.d.ts --include-runtime=false --strict-vars=false",
     "dev": "wrangler dev --local",
     "migrate:local": "wrangler d1 migrations apply DB --local",

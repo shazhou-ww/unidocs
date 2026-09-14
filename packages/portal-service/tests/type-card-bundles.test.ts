@@ -5,13 +5,7 @@ import { createTypeCardBundleService, type BundleObjectWrite, type TypeCardBundl
 const context = { memberId: "adm_1", identity: { issuer: "issuer", subject: "subject", email: "admin@example.com", authenticatedAt: 1 }, transport: "bearer" as const };
 
 function webp() {
-  const bytes = new Uint8Array(30);
-  bytes.set(new TextEncoder().encode("RIFF"));
-  const view = new DataView(bytes.buffer);
-  view.setUint32(4, 22, true);
-  bytes.set(new TextEncoder().encode("WEBPVP8X"), 8);
-  view.setUint32(16, 10, true);
-  return bytes;
+  return Uint8Array.from(Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA", "base64"));
 }
 
 async function archive() {
@@ -89,7 +83,7 @@ describe("Type Card bundle service", () => {
 // relaxation, merging the bundle feature turned every admin route — sign-in
 // included — into a blanket 503.
 test("bundleOrigin accepts a loopback origin for local development, and nothing else non-HTTPS", () => {
-  const store = { async put() {} };
+  const store = { async put() { } };
   const repository = {} as TypeCardBundleRepository;
   for (const origin of ["http://127.0.0.1:8796", "http://localhost:8796", "https://bundles.shazhou.work"]) {
     expect(() => createTypeCardBundleService(repository, store, { bundleOrigin: origin }), origin).not.toThrow();

@@ -44,23 +44,13 @@ function png(width: number, height: number) {
   return result;
 }
 
-function webp(width: number, height: number) {
-  const bytes = new Uint8Array(30);
-  bytes.set(new TextEncoder().encode("RIFF"));
-  const view = new DataView(bytes.buffer);
-  view.setUint32(4, 22, true);
-  bytes.set(new TextEncoder().encode("WEBPVP8X"), 8);
-  view.setUint32(16, 10, true);
-  const encodedWidth = width - 1;
-  const encodedHeight = height - 1;
-  bytes.set([encodedWidth & 0xff, (encodedWidth >>> 8) & 0xff, encodedWidth >>> 16], 24);
-  bytes.set([encodedHeight & 0xff, (encodedHeight >>> 8) & 0xff, encodedHeight >>> 16], 27);
-  return bytes;
+function webp() {
+  return Uint8Array.from(Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA", "base64"));
 }
 
 const validSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="#123" d="M0 0h1v1z"/></svg>';
 const viewFiles: [string, string][] = [["view.html", "<html>View</html>"], ["thumbnail.html", "<html>Thumbnail</html>"], ["app.js", "export {};"]];
-const cardFiles: FixtureFile[] = [["icon.svg", validSvg], ["sample.webp", webp(640, 360)]];
+const cardFiles: FixtureFile[] = [["icon.svg", validSvg], ["sample.webp", webp()]];
 const expectedView = { kind: "view" as const, documentType: "markdown", documentContractIdxs: [0, 1, 2] };
 const expectedCard = { ...expectedView, kind: "type-card" as const };
 
@@ -153,7 +143,7 @@ describe("bundle manifest and content identity", () => {
     expect(result.kind).toBe("type-card");
     expect(result.assets?.map(({ path, contentType, width, height }) => ({ path, contentType, width, height }))).toEqual([
       { path: "icon.svg", contentType: "image/svg+xml", width: null, height: null },
-      { path: "sample.webp", contentType: "image/webp", width: 640, height: 360 },
+      { path: "sample.webp", contentType: "image/webp", width: 1, height: 1 },
     ]);
     expect(result.assets?.find(asset => asset.path === "sample.webp")?.bytes).toEqual(cardFiles[1][1]);
   });
@@ -161,7 +151,7 @@ describe("bundle manifest and content identity", () => {
   test("requires every PNG raster reference to exist", async () => {
     const sizes = [16, 32, 64, 128, 256];
     const manifest = { ...card, icon: { kind: "png", images: Object.fromEntries(sizes.map(size => [size, `icon-${size}.png`])) } };
-    const files: FixtureFile[] = [...sizes.map(size => [`icon-${size}.png`, png(size, size)] as FixtureFile), ["sample.webp", webp(640, 360)]];
+    const files: FixtureFile[] = [...sizes.map(size => [`icon-${size}.png`, png(size, size)] as FixtureFile), ["sample.webp", webp()]];
     const result = await inspectBundleManifest(await archive(manifest, files, "type-card"), expectedCard);
     expect(result.manifest).toEqual(manifest);
     await expect(inspectBundleManifest(await archive(manifest, files.slice(1), "type-card"), expectedCard)).rejects.toBeInstanceOf(BundleZipError);
@@ -180,7 +170,7 @@ describe("bundle manifest and content identity", () => {
     await expect(inspectBundleManifest(await archive(card, [["icon.svg", validSvg], ["sample.webp", "not-webp"]], "type-card"), expectedCard)).rejects.toBeInstanceOf(BundleZipError);
     const sizes = [16, 32, 64, 128, 256];
     const manifest = { ...card, icon: { kind: "png", images: Object.fromEntries(sizes.map(size => [size, `icon-${size}.png`])) } };
-    const wrongSizeFiles: FixtureFile[] = [...sizes.map(size => [`icon-${size}.png`, png(size === 32 ? 31 : size, size)] as FixtureFile), ["sample.webp", webp(640, 360)]];
+    const wrongSizeFiles: FixtureFile[] = [...sizes.map(size => [`icon-${size}.png`, png(size === 32 ? 31 : size, size)] as FixtureFile), ["sample.webp", webp()]];
     await expect(inspectBundleManifest(await archive(manifest, wrongSizeFiles, "type-card"), expectedCard)).rejects.toBeInstanceOf(BundleZipError);
     await expect(inspectBundleManifest(await archive(card, [...cardFiles, ["run.js", "alert(1)"]], "type-card"), expectedCard)).rejects.toBeInstanceOf(BundleZipError);
   });

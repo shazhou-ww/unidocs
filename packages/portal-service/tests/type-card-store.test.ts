@@ -5,13 +5,7 @@ import { inspectBundleManifest, storeTypeCardBundleObjects, type BundleObjectWri
 const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>';
 
 function webp() {
-  const bytes = new Uint8Array(30);
-  bytes.set(new TextEncoder().encode("RIFF"));
-  const view = new DataView(bytes.buffer);
-  view.setUint32(4, 22, true);
-  bytes.set(new TextEncoder().encode("WEBPVP8X"), 8);
-  view.setUint32(16, 10, true);
-  return bytes;
+  return Uint8Array.from(Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA", "base64"));
 }
 
 async function inspection() {

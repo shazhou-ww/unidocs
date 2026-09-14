@@ -32,13 +32,7 @@ beforeEach(async () => {
 afterEach(async () => { await miniflare?.dispose(); });
 
 function webp() {
-  const bytes = new Uint8Array(30);
-  bytes.set(new TextEncoder().encode("RIFF"));
-  const view = new DataView(bytes.buffer);
-  view.setUint32(4, 22, true);
-  bytes.set(new TextEncoder().encode("WEBPVP8X"), 8);
-  view.setUint32(16, 10, true);
-  return bytes;
+  return Uint8Array.from(Buffer.from("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA", "base64"));
 }
 
 async function archive(documentType) {
