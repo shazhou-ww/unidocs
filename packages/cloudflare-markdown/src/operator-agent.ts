@@ -147,10 +147,11 @@ async function submissionFor(
 ): Promise<AgentSubmissionRequest> {
   const watermark = { threadId, observedAcknowledgedCommentIdx: acknowledged, respondThroughCommentIdx: latest.commentIdx };
   const text = latest.content.text ?? "";
-  const pureReply = (note = ""): AgentSubmissionRequest => ({
+  const replyOnly = (replyText: string): AgentSubmissionRequest => ({
     submissionId,
-    threadUpdates: [{ ...watermark, content: message(`收到：${Array.from(text).slice(0, 80).join("")}${note}`), resultLocations: [] }],
+    threadUpdates: [{ ...watermark, content: message(replyText), resultLocations: [] }],
   });
+  const pureReply = (note = ""): AgentSubmissionRequest => replyOnly(`收到：${Array.from(text).slice(0, 80).join("")}${note}`);
 
   const replacement = REPLACE_COMMENT.exec(text)?.[1];
   const range = latest.location?.locationType === TEXT_RANGE ? textRange(latest.location.payload) : null;
@@ -164,6 +165,8 @@ async function submissionFor(
   if (start === -1) return pureReply(`（当前版本中找不到原文「${range.quote}」，未修改）`);
 
   const rewritten = content.slice(0, start) + replacement + content.slice(start + range.quote.length);
+  // A version whose content equals the current one is forbidden (design §7.1, spec §8): answer without writing a snapshot.
+  if (rewritten === content) return replyOnly(`内容已是「${replacement}」，未作修改`);
   return {
     submissionId,
     observedCurrentVersionIdx: current,

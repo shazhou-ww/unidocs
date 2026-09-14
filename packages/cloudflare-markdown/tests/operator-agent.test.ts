@@ -218,6 +218,28 @@ test("7b. a quote that no longer exists anywhere gets a pure reply saying so", a
   expect(submissions[0].threadUpdates[0].content.text).toContain("目标句");
 });
 
+test("7c. a replace comment whose text is already the quoted text gets a pure reply and writes no snapshot", async () => {
+  const content = "# 标题\n\n新的文字在这里";
+  const quote = "新的文字";
+  const start = content.indexOf(quote);
+  const state: State = {
+    document: document(0), snapshots: new Map([[0, content]]),
+    threads: new Map([["th-1", { threadId: "th-1", comments: [comment(0, "改为：新的文字", range(start, start + quote.length, quote))], replies: [] }]]),
+  };
+  const { platform, submissions } = fakePlatform(state);
+  const { snapshots, writes } = fakeSnapshots();
+  await handleOperatorEvent(event("comment.appended", 0, [{ threadId: "th-1", commentIdx: 0 }]), { platform, snapshots });
+  expect(writes).toEqual([]);
+  expect(submissions).toEqual([{
+    submissionId: "evt-e1-th-1-0",
+    threadUpdates: [{
+      threadId: "th-1", observedAcknowledgedCommentIdx: null, respondThroughCommentIdx: 0,
+      content: { text: "内容已是「新的文字」，未作修改", richContent: null, attachments: [] }, resultLocations: [],
+    }],
+  }]);
+  expect(submissions[0]).not.toHaveProperty("newSnapshotBlob");
+});
+
 test("8. three rejections stop after exactly three submissions, log the abandonment, and do not throw", async () => {
   const state: State = {
     document: document(0), snapshots: new Map([[0, "x"]]),
