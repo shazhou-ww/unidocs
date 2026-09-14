@@ -13,6 +13,32 @@ export interface RecordedStatement {
  */
 export interface D1DatabaseDouble extends D1Database {
   readonly statements: readonly RecordedStatement[];
+  /**
+   * Every `batch()` call, as the array of prepared statements it was given.
+   * Empty when the repository under test never calls `batch()`.
+   */
+  readonly batchCalls: readonly unknown[][];
+}
+
+/**
+ * Options form of {@link databaseDouble}. `rows` keeps the original
+ * behaviour: every `all()` call returns the same canned rows, and `first()`
+ * falls back to `rows[0]` once `firsts` is exhausted (or was never given).
+ *
+ * `firsts` is a queue consumed one entry per `first()` call, in call order,
+ * regardless of which statement issued it. That is what a replay-then-write
+ * repository needs: the pre-write idempotency check and a post-failure
+ * re-read are two separate `first()` calls that must see two different
+ * receipt rows.
+ *
+ * `batchThrows`, when set, makes every `batch()` call throw that error
+ * instead of succeeding — used to exercise the "re-read the receipt after a
+ * failed batch" path.
+ */
+export interface D1DatabaseDoubleOptions<Row extends Record<string, unknown> = Record<string, unknown>> {
+  readonly rows?: readonly Row[];
+  readonly firsts?: readonly (Record<string, unknown> | null)[];
+  readonly batchThrows?: Error;
 }
 
 /**
@@ -20,7 +46,8 @@ export interface D1DatabaseDouble extends D1Database {
  *
  * `prepare` ignores the SQL text and the bound parameters when deciding what
  * to return: every statement returns the same canned `rows` from `all()`,
- * and the first of them from `first()`. Paging logic (slicing to `limit`,
+ * and the first of them from `first()` (or the next entry off `firsts`, see
+ * {@link D1DatabaseDoubleOptions}). Paging logic (slicing to `limit`,
  * deciding `nextCursor`) lives in the repository, not in this double, so a
  * test exercises it by seeding more rows than the `limit` it queries with —
  * seeding alone is enough, no query-shaped filtering is needed here.
@@ -29,24 +56,38 @@ export interface D1DatabaseDouble extends D1Database {
  * *does* care what SQL or bind arguments a repository sent (e.g. that a
  * decoded cursor was actually bound into the query) can inspect it.
  *
- * Task 4 extends this double with `batch()` support; keep additions here
- * additive so tasks 5-8 can keep reusing the same double instead of each
- * forking their own.
+ * Task 4 extended this double with `batch()` support and the `firsts` queue;
+ * keep further additions here additive so tasks 5-8 can keep reusing the
+ * same double instead of each forking their own.
  */
-export function databaseDouble<Row extends Record<string, unknown>>(rows: readonly Row[]): D1DatabaseDouble {
+export function databaseDouble<Row extends Record<string, unknown>>(rows: readonly Row[]): D1DatabaseDouble;
+export function databaseDouble<Row extends Record<string, unknown>>(options: D1DatabaseDoubleOptions<Row>): D1DatabaseDouble;
+export function databaseDouble<Row extends Record<string, unknown>>(
+  arg: readonly Row[] | D1DatabaseDoubleOptions<Row>,
+): D1DatabaseDouble {
+  const options: D1DatabaseDoubleOptions<Row> = Array.isArray(arg) ? { rows: arg as readonly Row[] } : (arg as D1DatabaseDoubleOptions<Row>);
+  const rows = options.rows ?? [];
+  const firsts = [...(options.firsts ?? [])];
   const statements: RecordedStatement[] = [];
+  const batchCalls: unknown[][] = [];
   const double = {
     statements,
+    batchCalls,
     prepare(sql: string) {
       return {
         bind: (...args: unknown[]) => {
           statements.push({ sql, args });
           return {
             all: async () => ({ results: rows }),
-            first: async () => rows[0] ?? null,
+            first: async () => (firsts.length > 0 ? firsts.shift() ?? null : rows[0] ?? null),
           };
         },
       };
+    },
+    batch: async (prepared: unknown[]) => {
+      batchCalls.push(prepared);
+      if (options.batchThrows) throw options.batchThrows;
+      return prepared.map(() => ({ meta: { changes: 1 } }));
     },
   };
   return double as unknown as D1DatabaseDouble;
