@@ -21,6 +21,7 @@
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
     "@cloudflare/workers-oauth-provider": "0.10.3",
     "@modelcontextprotocol/server": "2.0.0",
     "@orpc/openapi": "1.15.0",
@@ -29,6 +30,7 @@
     "@unicas/tenant-blob-client": "workspace:*",
     "@unicas/tenant-client": "workspace:*",
     "@unidocs/portal-service": "workspace:*",
+    "@unidocs/protocol": "workspace:*",
     "@unidocs/protocol-admin-portal": "workspace:*",
     "@unidocs/protocol-platform": "workspace:*",
     "@unidocs/protocol-tenant-portal": "workspace:*",
