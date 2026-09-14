@@ -5,6 +5,7 @@ import {
   CasBlobRefSchema,
   DocumentLocationSchema,
   MessageContentSchema,
+  SubmissionReceiptSchema,
   VersionIdxSchema,
 } from "../src/schemas.js";
 
@@ -103,5 +104,63 @@ describe("AgentSubmissionRequestSchema", () => {
       threadUpdates: [],
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("SubmissionReceiptSchema", () => {
+  it("accepts a committed receipt with a version and replies", () => {
+    const result = SubmissionReceiptSchema.safeParse({
+      submissionId: "sub-1",
+      state: "committed",
+      version: {
+        versionIdx: 1,
+        parentVersionIdx: 0,
+        documentContractIdx: 0,
+        authorAgentId: "agent:operator-markdown",
+        submissionId: "sub-1",
+        addressedComments: [{ threadId: "th-1", commentIdx: 0, baseVersionIdx: 0 }],
+        createdAt: "2026-09-12T00:00:00.000Z",
+      },
+      replies: [],
+      committedAt: "2026-09-12T00:00:00.000Z",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a committed pure reply whose version is null", () => {
+    const result = SubmissionReceiptSchema.safeParse({
+      submissionId: "sub-1",
+      state: "committed",
+      version: null,
+      replies: [],
+      committedAt: "2026-09-12T00:00:00.000Z",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a rejected receipt carrying the conflict", () => {
+    const result = SubmissionReceiptSchema.safeParse({
+      submissionId: "sub-1",
+      state: "rejected",
+      reason: "version_conflict",
+      conflict: {
+        currentVersionIdx: 4,
+        availableDocumentContractIdxs: [0],
+        threads: [{ threadId: "th-1", acknowledgedCommentIdx: 1, latestCommentIdx: 2 }],
+      },
+      rejectedAt: "2026-09-12T00:00:00.000Z",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown rejection reason", () => {
+    const result = SubmissionReceiptSchema.safeParse({
+      submissionId: "sub-1",
+      state: "rejected",
+      reason: "made_up",
+      conflict: { currentVersionIdx: null, availableDocumentContractIdxs: [0], threads: [] },
+      rejectedAt: "2026-09-12T00:00:00.000Z",
+    });
+    expect(result.success).toBe(false);
   });
 });

@@ -101,3 +101,71 @@ export const AgentSubmissionRequestSchema = z.object({
     });
   }
 }).readonly().meta({ id: "AgentSubmissionRequest" });
+
+export const AddressedCommentSchema = z.object({
+  threadId: IdSchema.describe("Thread containing the addressed comment."),
+  commentIdx: CommentIdxSchema.describe("Addressed comment within that thread."),
+  baseVersionIdx: VersionIdxSchema.describe("Version the addressed comment was written against."),
+}).readonly().meta({ id: "AddressedComment" });
+
+export const VersionRecordSchema = z.object({
+  versionIdx: VersionIdxSchema.describe("Version identity and birth order."),
+  parentVersionIdx: VersionIdxSchema.nullable()
+    .describe("Current pointer observed at commit; null only for the first version."),
+  documentContractIdx: DocumentContractIdxSchema.describe("Paired revision validating this snapshot."),
+  authorAgentId: NonEmptyStringSchema.describe("Agent identity that committed this version."),
+  submissionId: IdSchema.describe("Submission that created this version."),
+  addressedComments: z.array(AddressedCommentSchema).readonly()
+    .describe("Comment provenance; empty for the first version."),
+  createdAt: IsoDateTimeSchema.describe("Time at which the version was committed."),
+}).readonly().meta({ id: "VersionRecord" });
+
+export const ReplyRecordSchema = z.object({
+  replyIdx: ReplyIdxSchema.describe("Reply identity within its thread."),
+  respondThroughCommentIdx: CommentIdxSchema
+    .describe("Cumulative acknowledgement watermark this reply advanced the thread to."),
+  content: MessageContentSchema.describe("Agent message body."),
+  resultLocations: z.array(DocumentLocationSchema).readonly()
+    .describe("Locations in the version created by the same submission."),
+  authorAgentId: NonEmptyStringSchema.describe("Agent identity that produced the reply."),
+  submissionId: IdSchema.describe("Submission that committed this reply."),
+  createdAt: IsoDateTimeSchema.describe("Time at which the reply was committed."),
+}).readonly().meta({ id: "ReplyRecord" });
+
+export const SubmissionConflictSchema = z.object({
+  currentVersionIdx: VersionIdxSchema.nullable().describe("Current pointer at the time of rejection."),
+  availableDocumentContractIdxs: z.array(DocumentContractIdxSchema).readonly()
+    .describe("Revisions currently writable for this document type."),
+  threads: z.array(z.object({
+    threadId: IdSchema,
+    acknowledgedCommentIdx: CommentIdxSchema.nullable(),
+    latestCommentIdx: CommentIdxSchema,
+  }).readonly()).readonly().describe("Present watermarks for the threads the submission addressed."),
+}).readonly().meta({ id: "SubmissionConflict" });
+
+export const SubmissionRejectionReasonSchema = z.enum([
+  "version_conflict",
+  "document_contract_conflict",
+  "reply_watermark_conflict",
+]);
+
+/**
+ * A rejected submission is a successful HTTP response, not a 4xx: the endpoint's
+ * response type is this union, and the Agent recomputes from `conflict`.
+ */
+export const SubmissionReceiptSchema = z.discriminatedUnion("state", [
+  z.object({
+    submissionId: IdSchema,
+    state: z.literal("committed"),
+    version: VersionRecordSchema.nullable().describe("Null for a pure reply."),
+    replies: z.array(ReplyRecordSchema).readonly(),
+    committedAt: IsoDateTimeSchema,
+  }).readonly(),
+  z.object({
+    submissionId: IdSchema,
+    state: z.literal("rejected"),
+    reason: SubmissionRejectionReasonSchema,
+    conflict: SubmissionConflictSchema,
+    rejectedAt: IsoDateTimeSchema,
+  }).readonly(),
+]).meta({ id: "SubmissionReceipt" });
