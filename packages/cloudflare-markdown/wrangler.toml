@@ -22,6 +22,17 @@ CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "1800"
 CAPABILITY_CLOCK_SKEW_SECONDS = "30"
 MARKDOWN_OPERATOR_DOCUMENT_TYPE = "dt-292d2d45-fbd9-4392-99cd-f46474679667"
+# Operator webhook loop. Portal requests travel over PLATFORM_SERVICE, but
+# their URLs are built from PLATFORM_ORIGIN because the Portal only accepts a
+# bearer request addressed to its own origin. The Operator writes snapshots to
+# UniCAS as an Agent (read+write, no refDomain); its OPERATOR_CAS_* names stay
+# apart from the delegated-capability CAS_* settings above.
+PLATFORM_ORIGIN = "https://unidocs.shazhou.work"
+OPERATOR_CAS_ORIGIN = ""
+OPERATOR_CAS_STACK_ID = ""
+OPERATOR_CAS_ISSUER = ""
+OPERATOR_CAS_AUDIENCE = ""
+OPERATOR_CAS_SIGNING_KID = ""
 
 [exports.MarkdownEditor]
 type = "durable-object"
@@ -45,6 +56,10 @@ class_name = "MarkdownOperator"
 binding = "CAS_SERVICE"
 service = "unidocs-cas"
 
+[[services]]
+binding = "PLATFORM_SERVICE"
+service = "unidocs-portal-local"
+
 # Deployment secrets (wrangler secret put, never in this file):
 #   CAPABILITY_ISSUER            doc-service identity issuer (== gateway's)
 #   CAPABILITY_TRUSTED_JWKS      doc-service identity public JWKS (pinned)
@@ -52,3 +67,6 @@ service = "unidocs-cas"
 #                                RFC 8414 discovery from CAS_STACK_ISSUER
 #   MARKDOWN_OPERATOR_HMAC_KEY   64 lowercase hex characters shared only with
 #                                the Admin Portal Operator validation target
+#                                and the Portal's webhook dispatcher
+#   PLATFORM_AGENT_TOKEN         equal to the Portal's AGENT_API_TOKEN
+#   OPERATOR_CAS_SIGNING_KEY     PKCS8 stack signing key for the Agent CAS writes

@@ -395,6 +395,9 @@ importers:
       '@unicas/codec':
         specifier: workspace:*
         version: link:../../unicas-packages/codec
+      '@unicas/tenant-blob-client':
+        specifier: workspace:*
+        version: link:../../unicas-packages/tenant-blob-client
       '@unicas/tenant-client':
         specifier: workspace:*
         version: link:../../unicas-packages/tenant-client
@@ -410,6 +413,12 @@ importers:
       '@unidocs/protocol':
         specifier: workspace:*
         version: link:../protocol
+      '@unidocs/protocol-platform':
+        specifier: workspace:*
+        version: link:../protocol-platform
+      '@unidocs/protocol-tenant-portal':
+        specifier: workspace:*
+        version: link:../protocol-tenant-portal
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
