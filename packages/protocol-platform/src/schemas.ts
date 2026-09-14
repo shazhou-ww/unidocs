@@ -169,3 +169,32 @@ export const SubmissionReceiptSchema = z.discriminatedUnion("state", [
     rejectedAt: IsoDateTimeSchema,
   }).readonly(),
 ]).meta({ id: "SubmissionReceipt" });
+
+export const OperatorEventReasonSchema = z.enum([
+  "document.created",
+  "comment.appended",
+  "current_version.moved",
+]);
+
+/** Delivery is at-least-once, and acceptance does not imply the Agent finished. */
+export const OperatorWebhookRequestSchema = z.object({
+  protocol: z.literal("unidocs-operator-webhook/v1"),
+  eventId: IdSchema.describe("Stable event identity for duplicate suppression."),
+  reason: OperatorEventReasonSchema,
+  tenantId: IdSchema,
+  documentId: IdSchema,
+  documentType: NonEmptyStringSchema,
+  currentVersionIdx: VersionIdxSchema.nullable()
+    .describe("Current pointer at the time of the event; null before the first version."),
+  newComments: z.array(z.object({
+    threadId: IdSchema,
+    commentIdx: CommentIdxSchema,
+    acknowledgedCommentIdx: CommentIdxSchema.nullable(),
+  }).readonly()).readonly().describe("Work hint, not a transaction boundary."),
+  occurredAt: IsoDateTimeSchema,
+}).readonly().meta({ id: "OperatorWebhookRequest" });
+
+export const OperatorWebhookResponseSchema = z.object({
+  accepted: z.literal(true),
+  eventId: IdSchema,
+}).readonly().meta({ id: "OperatorWebhookResponse" });

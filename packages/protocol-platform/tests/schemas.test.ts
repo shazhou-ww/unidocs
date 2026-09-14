@@ -5,6 +5,7 @@ import {
   CasBlobRefSchema,
   DocumentLocationSchema,
   MessageContentSchema,
+  OperatorWebhookRequestSchema,
   SubmissionReceiptSchema,
   VersionIdxSchema,
 } from "../src/schemas.js";
@@ -162,5 +163,39 @@ describe("SubmissionReceiptSchema", () => {
       rejectedAt: "2026-09-12T00:00:00.000Z",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+const webhook = (over = {}) => ({
+  protocol: "unidocs-operator-webhook/v1",
+  eventId: "evt-1",
+  reason: "comment.appended",
+  tenantId: "t-local",
+  documentId: "doc-1",
+  documentType: "markdown",
+  currentVersionIdx: 0,
+  newComments: [{ threadId: "th-1", commentIdx: 1, acknowledgedCommentIdx: 0 }],
+  occurredAt: "2026-09-12T00:00:00.000Z",
+  ...over,
+});
+
+describe("OperatorWebhookRequestSchema", () => {
+  it("accepts an incremental comment notification", () => {
+    expect(OperatorWebhookRequestSchema.safeParse(webhook()).success).toBe(true);
+  });
+
+  it("accepts a document.created notification with no current version", () => {
+    const result = OperatorWebhookRequestSchema.safeParse(
+      webhook({ reason: "document.created", currentVersionIdx: null, newComments: [] }),
+    );
+    expect(result.success).toBe(true);
+  });
+
+  it("refuses a wrong protocol literal", () => {
+    expect(OperatorWebhookRequestSchema.safeParse(webhook({ protocol: "v2" })).success).toBe(false);
+  });
+
+  it("refuses an unknown reason", () => {
+    expect(OperatorWebhookRequestSchema.safeParse(webhook({ reason: "document.deleted" })).success).toBe(false);
   });
 });
