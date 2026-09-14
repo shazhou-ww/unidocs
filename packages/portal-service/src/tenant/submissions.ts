@@ -1,6 +1,6 @@
 import {
   AgentSubmissionRequestSchema, documentSnapshotContentType,
-  type AddressedComment, type AgentSubmissionRequest, type AgentThreadUpdate, type CasBlobRef, type SubmissionReceipt, type SValueSchema,
+  type AddressedComment, type AgentScope, type AgentSubmissionRequest, type AgentThreadUpdate, type CasBlobRef, type SubmissionReceipt, type SValueSchema,
 } from "@unidocs/protocol-platform";
 import { canonicalJson, schemaHash } from "../identity.js";
 import {
@@ -59,10 +59,18 @@ export interface TenantSubmissionRepository {
 export type SnapshotVerifier = (ref: CasBlobRef, schema: SValueSchema, expectedContentType: string) => Promise<"ok" | "invalid_request" | "content_unavailable" | "unavailable">;
 
 const MAX_THREAD_UPDATES = 50;
-const AGENT_SCOPES: readonly string[] = ["documents:read", "cas:read", "cas:lease", "comments:read", "comments:reply", "versions:submit"];
+
+/**
+ * R9's grant to the operator Agent, and the one list of scopes this service
+ * recognises as an Agent's. The Cloudflare bearer authenticator grants exactly
+ * this list, so the scopes checked here and the scopes granted there cannot
+ * drift apart. `cas:read` and `cas:lease` are Agent scopes in the protocol
+ * vocabulary but are not granted: v0 issues no CAS capabilities.
+ */
+export const AGENT_SCOPES = ["documents:read", "comments:read", "comments:reply", "versions:submit"] as const satisfies readonly AgentScope[];
 
 /** Submissions are an Agent bearer operation; a browser session never reaches them (R10). */
-function requireScopes(context: TenantContext, required: readonly string[]): void {
+function requireScopes(context: TenantContext, required: readonly AgentScope[]): void {
   if (context.transport !== "bearer") throw new TenantAccessError("forbidden");
   const granted = context.scopes ?? [];
   if (required.some(scope => !granted.includes(scope))) throw new TenantAccessError("forbidden");
@@ -186,7 +194,7 @@ export function createTenantSubmissionService(repository: TenantSubmissionReposi
       for (const update of request.threadUpdates) requireIdentifier(update.threadId);
 
       const hasSnapshot = request.newSnapshotBlob !== undefined;
-      requireScopes(context, [...(hasSnapshot ? ["versions:submit"] : []), ...(request.threadUpdates.length > 0 ? ["comments:reply"] : [])]);
+      requireScopes(context, [...(hasSnapshot ? ["versions:submit" as const] : []), ...(request.threadUpdates.length > 0 ? ["comments:reply" as const] : [])]);
 
       if (!hasSnapshot && request.threadUpdates.length === 0) throw new TenantOperationError("invalid_request");
       if (request.threadUpdates.length > MAX_THREAD_UPDATES) throw new TenantOperationError("invalid_request");
@@ -210,7 +218,7 @@ export function createTenantSubmissionService(repository: TenantSubmissionReposi
       requireTenantScope(context, tenantId);
       const document = requireIdentifier(documentId);
       const submission = requireIdentifier(submissionId);
-      if (context.transport !== "bearer" || !(context.scopes ?? []).some(scope => AGENT_SCOPES.includes(scope))) throw new TenantAccessError("forbidden");
+      if (context.transport !== "bearer" || !(context.scopes ?? []).some(scope => (AGENT_SCOPES as readonly string[]).includes(scope))) throw new TenantAccessError("forbidden");
       const stored = await repository.findReceipt(context, document, submission);
       if (!stored) throw new TenantOperationError("not_found");
       return stored.receipt;

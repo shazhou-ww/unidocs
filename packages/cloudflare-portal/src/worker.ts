@@ -36,6 +36,9 @@ import { createLocationValidator } from "./tenant/location-validator.js";
 import { authenticateTenant, D1TenantSessionStore } from "./tenant/session.js";
 import { createTenantSessionHttp } from "./tenant/session-http.js";
 import { createTenantHttp } from "./tenant/tenant-http.js";
+import { createAgentHttp, isSubmissionPath } from "./tenant/agent-http.js";
+import { CasUnavailableError } from "./tenant/cas-unavailable.js";
+import { D1TenantSubmissionRepository } from "./tenant/submission-repository.js";
 import { D1TenantThreadRepository } from "./tenant/thread-repository.js";
 import { D1TenantVersionRepository } from "./tenant/version-repository.js";
 
@@ -50,6 +53,8 @@ function isTenantPath(path: string): boolean {
  * every authenticated tenant route (this worker has already gone down three times to a
  * capability built unconditionally on every request). Built here, the failure
  * surfaces inside `read()`, which the version repository maps to `unavailable`.
+ * `build` is expected to throw `CasUnavailableError` for a store it cannot
+ * build, so the Agent submissions adapter can log that case by type.
  */
 function lazySnapshotStore(build: () => Promise<SnapshotStore>): SnapshotStore {
   let store: Promise<SnapshotStore> | undefined;
@@ -90,13 +95,26 @@ async function serveTenant(request: Request, env: Env, path: string): Promise<Re
     } else {
       try {
         const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store, ...agent });
-        response = await createTenantHttp({
-          catalog: new D1TenantCatalogRepository(env.DB),
-          documents: new D1TenantDocumentRepository(env.DB),
-          versions: new D1TenantVersionRepository(env.DB, lazySnapshotStore(() => createPortalCasRuntime(env, tenant.tenantId))),
-          threads: new D1TenantThreadRepository(env.DB),
-          validateLocation: createLocationValidator(),
-        })(request, tenant, requestId);
+        const snapshots = lazySnapshotStore(async () => {
+          try {
+            return await createPortalCasRuntime(env, tenant.tenantId);
+          } catch (error) {
+            throw new CasUnavailableError(error);
+          }
+        });
+        response = isSubmissionPath(path)
+          ? await createAgentHttp({
+            submissions: new D1TenantSubmissionRepository(env.DB),
+            snapshots,
+            validateLocation: createLocationValidator(),
+          })(request, tenant, requestId)
+          : await createTenantHttp({
+            catalog: new D1TenantCatalogRepository(env.DB),
+            documents: new D1TenantDocumentRepository(env.DB),
+            versions: new D1TenantVersionRepository(env.DB, snapshots),
+            threads: new D1TenantThreadRepository(env.DB),
+            validateLocation: createLocationValidator(),
+          })(request, tenant, requestId);
       } catch (error) {
         if (!(error instanceof TenantAccessError)) throw error;
         response = Response.json(

@@ -239,6 +239,81 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
     expect(session.status).toBe(401);
   });
 
+  // The submissions route needs CAS only to verify a snapshot. With no CAS
+  // bindings a pure reply must still commit, and a snapshot must be a scoped
+  // 503 that says why in the log - never a whole-route failure.
+  it("routes Agent submissions: a pure reply commits without CAS, a snapshot is 503 portal_cas_unavailable", async () => {
+    const db = real.db;
+    await db.prepare(
+      "INSERT INTO portal_document_types (document_type, internal_name, enabled, registration_json, created_at) VALUES ('markdown', 'markdown', 1, ?, '2026-09-14T00:00:00.000Z')",
+    ).bind(JSON.stringify({
+      documentType: "markdown",
+      viewBundle: { viewBundleId: "vb-1", manifest: { supportedDocumentContractIdxs: [0] } },
+      builtinOperator: { operatorId: "op-1", descriptor: { supportedDocumentContracts: { markdown: [0] } } },
+    })).run();
+    await db.prepare(
+      "INSERT INTO portal_document_contracts (document_type, document_contract_idx, contract_hash, record_json, created_at) VALUES ('markdown', 0, 'sha256:contract', ?, 0)",
+    ).bind(JSON.stringify({
+      documentType: "markdown", documentContractIdx: 0, formatVersion: 1,
+      snapshot: { contentType: "application/vnd.unidocs.markdown.snapshot+cbor;version=1", schema: { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" }, schemaHash: "sha256:snapshot" },
+      location: { contentType: "application/vnd.unidocs.markdown.location+json;version=1", schema: { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" }, schemaHash: "sha256:location" },
+      contractHash: "sha256:contract", createdAt: "2026-09-14T00:00:00.000Z",
+    })).run();
+    await db.prepare("INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at) VALUES ('t-local', 'doc-1', 'Doc', 'markdown', NULL, 0)").run();
+    await db.prepare("INSERT INTO portal_threads (tenant_id, document_id, thread_id, created_at) VALUES ('t-local', 'doc-1', 'th-1', 0)").run();
+    await db.prepare(
+      `INSERT INTO portal_comments (tenant_id, document_id, thread_id, comment_idx, base_version_idx, content_json, location_json, author_id, created_at)
+       VALUES ('t-local', 'doc-1', 'th-1', 0, 0, '{"text":"c","richContent":null,"attachments":[]}', NULL, 'user-1', 0)`,
+    ).run();
+
+    const env = Object.defineProperties(tenantEnv(db), {
+      AGENT_API_TOKEN: { value: "agent-local-token-0123456789" },
+      AGENT_TENANT_ID: { value: "t-local" },
+    });
+    const url = `${ORIGIN}/api/v1/tenants/t-local/documents/doc-1/submissions`;
+    const headers = { authorization: "Bearer agent-local-token-0123456789", "content-type": "application/json" };
+    const reply = { threadId: "th-1", observedAcknowledgedCommentIdx: null, respondThroughCommentIdx: 0, content: { text: "ok", richContent: null, attachments: [] }, resultLocations: [] };
+
+    const logged = vi.spyOn(console, "error").mockImplementation(() => { });
+    try {
+      const pure = await worker.fetch(new Request(url, { method: "POST", headers, body: JSON.stringify({ submissionId: "reply-1", threadUpdates: [reply] }) }), env);
+      expect(pure.status).toBe(201);
+      expect(pure.headers.get("Cache-Control")).toBe("no-store");
+      expect(pure.headers.get("X-Request-ID")).toMatch(/\S/);
+      await expect(pure.json()).resolves.toMatchObject({ state: "committed", submissionId: "reply-1", version: null });
+
+      const receipt = await worker.fetch(new Request(`${url}/reply-1`, { headers: { authorization: headers.authorization } }), env);
+      expect(receipt.status).toBe(200);
+
+      const withSnapshot = await worker.fetch(new Request(url, {
+        method: "POST", headers,
+        body: JSON.stringify({
+          submissionId: "sub-1", observedCurrentVersionIdx: null, newDocumentContractIdx: 0,
+          newSnapshotBlob: { blobHash: "blob-1", size: 12, contentType: "application/vnd.unidocs.markdown.snapshot+cbor;version=1" },
+          threadUpdates: [],
+        }),
+      }), env);
+      expect(withSnapshot.status).toBe(503);
+      expect(withSnapshot.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-ancestors 'none'");
+      const body = await withSnapshot.json() as { error: { code: string; requestId: string } };
+      expect(body.error.code).toBe("unavailable");
+      expect(body.error.requestId).toBe(withSnapshot.headers.get("X-Request-ID"));
+      const events = logged.mock.calls.map(([line]) => JSON.parse(String(line)) as { event: string; requestId?: string });
+      expect(events).toContainEqual(expect.objectContaining({ event: "portal_cas_unavailable", requestId: body.error.requestId }));
+      expect(events.map(line => line.event)).not.toContain("portal_operation_failed");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("forbids a tenant session on the submissions route", async () => {
+    const env = tenantEnv(real.db);
+    const session = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`), env);
+    const pair = session.headers.getSetCookie().find(value => value.startsWith("__Host-unidocs_tenant="))!.split(";")[0];
+    const response = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents/doc-1/submissions/sub-1`, { headers: { cookie: pair } }), env);
+    expect(response.status).toBe(403);
+  });
+
   it("refuses any bearer when the Agent credential is not configured", async () => {
     const env = tenantEnv(real.db);
     const list = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, { headers: { authorization: "Bearer " } }), env);

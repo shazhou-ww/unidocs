@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TenantAccessError } from "@unidocs/portal-service";
-import { AGENT_PRINCIPAL_ID, AGENT_SCOPES, authenticateAgent } from "../../src/tenant/agent-auth.js";
+import { AGENT_SCOPES, TenantAccessError } from "@unidocs/portal-service";
+import { AGENT_PRINCIPAL_ID, authenticateAgent } from "../../src/tenant/agent-auth.js";
 import { TENANT_SESSION_COOKIE } from "../../src/tenant/session.js";
 
 const ORIGIN = "http://127.0.0.1:8795";
@@ -63,6 +63,17 @@ describe("authenticateAgent", () => {
 
   it("is forbidden when the request URL origin is not the portal origin", async () => {
     await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url: "http://evil.test:8795/api/v1/tenants/t-local/documents" }), options))
+      .rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it.each([
+    ["a wrong token", `Bearer ${TOKEN}x`],
+    ["no Authorization header", null],
+    ["a malformed header", "Basic abc"],
+  ])("is forbidden, not unauthorized, on a foreign host with %s: the token is never judged there", async (_label, authorization) => {
+    await expect(authenticateAgent(request(authorization, { url: "http://evil.test:8795/api/v1/tenants/t-local/documents" }), options))
+      .rejects.toMatchObject({ code: "forbidden" });
+    await expect(authenticateAgent(request(authorization, { url: "http://evil.test:8795/api/v1/tenants/t-local/documents" }), { ...options, token: undefined }))
       .rejects.toMatchObject({ code: "forbidden" });
   });
 

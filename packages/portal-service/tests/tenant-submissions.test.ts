@@ -1,7 +1,7 @@
 import { documentSnapshotContentType, type AgentSubmissionRequest, type AgentThreadUpdate, type SValueSchema } from "@unidocs/protocol-platform";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
-  createTenantSubmissionService, schemaHash, TENANT_LIMITS, TenantAccessError,
+  AGENT_SCOPES, createTenantSubmissionService, schemaHash, TENANT_LIMITS, TenantAccessError,
   type CommittedSubmissionReceipt, type SnapshotVerifier, type SubmissionCommitCommand, type SubmissionCommitOutcome,
   type SubmissionContract, type SubmissionState, type SubmissionThreadState, type TenantContext, type TenantSubmissionRepository,
 } from "../src/index.js";
@@ -190,6 +190,12 @@ describe("step 2 — scopes", () => {
     const replier: TenantContext = { ...agent, scopes: ["comments:reply"] };
     const receipt = await service().create(replier, "tenant-a", "doc-1", replyRequest());
     expect(receipt).toMatchObject({ state: "committed", version: null });
+  });
+
+  test("the exported Agent grant is enough to submit a version with replies and to read its receipt", async () => {
+    const granted: TenantContext = { ...agent, scopes: [...AGENT_SCOPES] };
+    await expect(service().create(granted, "tenant-a", "doc-1", versionRequest())).resolves.toMatchObject({ state: "committed" });
+    await expect(service().get(granted, "tenant-a", "doc-1", "sub-1")).resolves.toMatchObject({ state: "committed" });
   });
 
   test("scopes are checked before structure", async () => {
