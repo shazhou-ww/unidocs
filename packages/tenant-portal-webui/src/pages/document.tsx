@@ -146,7 +146,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     saveDraft: drafts.saveDraft,
     removeDraft: drafts.removeDraft,
     reload: session.reload,
-    followReply: follow.followReply,
+    bindReplyFollow: follow.bindReplyFollow,
   });
   latest.current = {
     client,
@@ -154,26 +154,32 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     saveDraft: drafts.saveDraft,
     removeDraft: drafts.removeDraft,
     reload: session.reload,
-    followReply: follow.followReply,
+    bindReplyFollow: follow.bindReplyFollow,
   };
 
   const viewHost: HostImplementation = useMemo(() => ({
     ...noopHost,
-    createThread: (request) => createThreadFromView({
-      client: latest.current.client,
-      documentId: props.documentId,
-      draftsForAnchor: latest.current.draftsForAnchor,
-      saveDraft: latest.current.saveDraft,
-      removeDraft: latest.current.removeDraft,
-      onSent: latest.current.reload,
-    }, request).then((detail) => {
-      const sent = sentCommentOf(detail);
-      latest.current.followReply(sent.threadId, sent.commentIdx);
-      return detail;
-    }),
+    createThread: (request) => {
+      // 发请求前绑定文档作用域：请求回来时页面若已卸载或换了文档，就不开始等 reply。
+      const followReply = latest.current.bindReplyFollow();
+      return createThreadFromView({
+        client: latest.current.client,
+        documentId: props.documentId,
+        draftsForAnchor: latest.current.draftsForAnchor,
+        saveDraft: latest.current.saveDraft,
+        removeDraft: latest.current.removeDraft,
+        onSent: latest.current.reload,
+      }, request).then((detail) => {
+        const sent = sentCommentOf(detail);
+        followReply(sent.threadId, sent.commentIdx);
+        return detail;
+      });
+    },
   }), [props.documentId]);
 
   const send = async (draft: Draft) => {
+    // 发请求前绑定文档作用域：POST 回来时页面若已卸载或换了文档，就不开始等 reply（见 use-operator-follow.ts）。
+    const followReply = follow.bindReplyFollow();
     try {
       const sent = await sendDraft(client, props.documentId, draft);
       drafts.removeDraft(draft.draftId);
@@ -181,7 +187,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
       // carry-forward 1：reload() 会把 loading 重新置 true，但下面的早退已经改成
       // 只在“还没有任何内容”时才整页早退，所以这次刷新不会把已经渲染的面板闪掉。
       session.reload();
-      follow.followReply(sent.threadId, sent.commentIdx);
+      followReply(sent.threadId, sent.commentIdx);
     } catch (cause) {
       // 失败一律保留草稿，复用原 idempotencyKey 重试——永远不丢用户写的字。
       setDraftFailures((previous) => ({ ...previous, [draft.draftId]: errorText(cause) }));

@@ -21,14 +21,26 @@ function harness(seed: MemorySeed, documentId: string, threadId?: string) {
   const store = createMemoryStore(seed);
   const inner = createMemoryTransport({ store });
   const requests: PlatformRequest[] = [];
-  const transport: PlatformTransport = async (request) => { requests.push(request); return inner(request); };
+  // holdComments 为真时，追加评论的 POST 挂起，直到测试调用 releaseComments——
+  // 用来制造「请求还在路上，用户已经离开」的时序。
+  const control = { holdComments: false, releaseComments: () => {} };
+  const transport: PlatformTransport = async (request) => {
+    requests.push(request);
+    if (control.holdComments && request.method === "POST" && request.path.endsWith("/comments")) {
+      await new Promise<void>((resolve) => { control.releaseComments = resolve; });
+    }
+    return inner(request);
+  };
   const client = createTenantPortalClient({ tenantId: "t1", transport });
-  const view = render(
-    <ClientProvider client={client}><DocumentPage documentId={documentId} threadId={threadId} /></ClientProvider>,
+  const page = (id: string, thread?: string) => (
+    <ClientProvider client={client}><DocumentPage documentId={id} threadId={thread} /></ClientProvider>
   );
+  const view = render(page(documentId, threadId));
   const reads = (suffix: string) =>
     requests.filter((request) => request.method === "GET" && request.path.endsWith(suffix)).length;
-  return { store, view, reads };
+  const posts = (suffix: string) =>
+    requests.filter((request) => request.method === "POST" && request.path.endsWith(suffix)).length;
+  return { store, view, reads, posts, control, page };
 }
 
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
@@ -151,6 +163,53 @@ describe("文档页跟随 Operator", () => {
     await advance(30_000);
 
     expect(reads("/threads/th-answered")).toBe(before);
+  });
+
+  it("评论 POST 还在路上时卸载：请求回来后不开始等 reply，不再读取也不落状态", async () => {
+    const { view, reads, posts, control } = harness(sampleSeed(), "doc-sample", "th-answered");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const panel = await screen.findByRole("complementary", { name: "讨论" });
+
+    control.holdComments = true;
+    await user.click(within(panel).getByRole("button", { name: "回复" }));
+    await user.type(within(panel).getByRole("textbox", { name: "回复这一处" }), "发出去就走");
+    await user.click(within(panel).getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(posts("/threads/th-answered/comments")).toBe(1));
+
+    view.unmount();
+    const before = reads("/threads/th-answered");
+    await act(async () => { control.releaseComments(); });
+    await advance(30_000);
+
+    expect(reads("/threads/th-answered")).toBe(before);
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it("评论 POST 还在路上时切到另一篇：不读旧文档的 thread，新文档上也不出现等待或超时提示", async () => {
+    const { view, reads, posts, control, page } = harness(sampleSeed(), "doc-sample", "th-answered");
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const panel = await screen.findByRole("complementary", { name: "讨论" });
+
+    control.holdComments = true;
+    await user.click(within(panel).getByRole("button", { name: "回复" }));
+    await user.type(within(panel).getByRole("textbox", { name: "回复这一处" }), "发出去就换一篇");
+    await user.click(within(panel).getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(posts("/threads/th-answered/comments")).toBe(1));
+
+    // DocumentPage 不按 documentId 加 key（app.tsx），切文档是同一个组件实例换 props。
+    view.rerender(page("doc-empty"));
+    expect(await screen.findByRole("heading", { name: "共创空间 · 发布手记" })).toBeInTheDocument();
+    const before = reads("/documents/doc-sample/threads/th-answered");
+    await act(async () => { control.releaseComments(); });
+    await advance(1500);
+    expect(screen.queryByText("等待 Operator 回复…")).not.toBeInTheDocument();
+    await advance(60_000);
+
+    expect(reads("/documents/doc-sample/threads/th-answered")).toBe(before);
+    expect(screen.queryByText("等待 Operator 回复…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Operator 暂未响应，可稍后刷新")).not.toBeInTheDocument();
   });
 
   it("发评论后 60 秒没有回复就提示 Operator 暂未响应", async () => {
