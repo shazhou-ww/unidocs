@@ -40,3 +40,13 @@ GATEWAY_OIDC_CLIENT_SECRET=
 # overrides this line.
 
 PORTAL_BOOTSTRAP_EMAIL=
+
+# The markdown Operator loop. `pnpm dev portal` starts the markdown worker
+# beside the portal and generates both values on every boot, handing the same
+# ones to both workers — leave them unset unless something outside the runtime
+# has to know them in advance. Set here, or in the environment under the same
+# names (which overrides this file). The key must be 64 lowercase hex
+# characters; anything else leaves the Operator answering 503.
+#
+# AGENT_API_TOKEN=
+# MARKDOWN_OPERATOR_HMAC_KEY=

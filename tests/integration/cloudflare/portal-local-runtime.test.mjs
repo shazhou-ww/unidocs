@@ -14,7 +14,9 @@ import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runt
  * can be deleted without any unit test noticing.
  */
 
-const PORTS = { gateway: 19187, admin: 19192, mockOidc: 19193, edge: 19194, portal: 19195, portalBundles: 19196 };
+// `markdown` too: the portal brings the markdown Operator worker up beside it,
+// and without an override it would take 8788 from a running `pnpm dev`.
+const PORTS = { gateway: 19187, markdown: 19188, admin: 19192, mockOidc: 19193, edge: 19194, portal: 19195, portalBundles: 19196 };
 const BOOTSTRAP_EMAIL = "portal-bootstrap@example.test";
 
 /** Every table the portal's committed migrations declare. */
@@ -195,4 +197,105 @@ describe("a second boot on the same portal database", () => {
       await runtime.dispose();
     }
   }, 180_000);
+});
+
+/**
+ * The portal and the markdown Operator worker are two halves of one loop: the
+ * portal dispatches webhooks through ADMIN_MARKDOWN_SERVICE, the Operator
+ * submits back through PLATFORM_SERVICE, and they authenticate each other with
+ * a shared HMAC key and Agent token that nobody configures locally. Only a
+ * real boot shows the runtime generated those once and handed the same values
+ * to both sides.
+ */
+describe("the markdown Operator beside the portal", () => {
+  let runtime;
+  let operatorPersistPath;
+  const operatorDescriptor = () => fetch(`http://127.0.0.1:${PORTS.markdown}/.well-known/unidocs-operator`);
+
+  beforeAll(async () => {
+    operatorPersistPath = await mkdtemp(join(tmpdir(), "unidocs-portal-operator-runtime-"));
+    runtime = await startLocalRuntime({
+      docTypes: [],
+      services: ["portal"],
+      ports: PORTS,
+      persistPath: operatorPersistPath,
+    });
+  }, 180_000);
+
+  afterAll(async () => {
+    await runtime?.dispose();
+    if (operatorPersistPath) await rm(operatorPersistPath, { recursive: true, force: true });
+  });
+
+  test("1. binds the Operator key and the Agent token to the portal, and starts the markdown worker", async () => {
+    const bindings = await runtime.mf.getBindings("unidocs-portal");
+    expect(bindings.MARKDOWN_OPERATOR_HMAC_KEY).toMatch(/^[0-9a-f]{64}$/);
+    expect(bindings.AGENT_API_TOKEN).toMatch(/\S/);
+    expect(bindings.AGENT_TENANT_ID).toBe("t-local");
+    expect(runtime.secrets).toEqual({
+      agentToken: bindings.AGENT_API_TOKEN,
+      operatorHmacKey: bindings.MARKDOWN_OPERATOR_HMAC_KEY,
+    });
+    expect(runtime.urls.markdown).toBe(`http://127.0.0.1:${PORTS.markdown}`);
+    // The gateway's registry is still what the caller selected: the markdown
+    // worker runs for the portal, not as a document type behind the gateway.
+    expect(runtime.docTypes).toEqual([]);
+
+    const response = await operatorDescriptor();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "operator_not_configured" });
+  });
+
+  test("2. injecting the document type reconfigures the Operator and keeps the portal's data", async () => {
+    const before = await runtime.mf.getD1Database("DB", "unidocs-portal");
+    await before.exec("CREATE TABLE task9_reconfigure_probe (value TEXT NOT NULL);");
+    await before.prepare("INSERT INTO task9_reconfigure_probe (value) VALUES (?)").bind("kept").run();
+
+    await runtime.setMarkdownOperatorDocumentType("dt-test");
+
+    const response = await operatorDescriptor();
+    expect(response.status).toBe(200);
+    expect((await response.json()).supportedDocumentTypes).toEqual(["dt-test"]);
+
+    // Handles taken before setOptions are poisoned; this is the contract the
+    // seed and the end-to-end test have to follow.
+    expect(() => before.prepare("SELECT value FROM task9_reconfigure_probe")).toThrow(/poisoned/);
+    const after = await runtime.mf.getD1Database("DB", "unidocs-portal");
+    const rows = await after.prepare("SELECT value FROM task9_reconfigure_probe").all();
+    expect((rows.results ?? []).map(row => row.value)).toEqual(["kept"]);
+
+    const portal = await fetch(`${runtime.urls.portal}/admin/auth/login`, { redirect: "manual" });
+    expect(portal.status).toBe(303);
+    await portal.body?.cancel();
+
+    // Reconfiguring must not mint new secrets: the seed already holds them.
+    const bindings = await runtime.mf.getBindings("unidocs-portal");
+    expect(bindings.AGENT_API_TOKEN).toBe(runtime.secrets.agentToken);
+    expect(bindings.MARKDOWN_OPERATOR_HMAC_KEY).toBe(runtime.secrets.operatorHmacKey);
+  });
+
+  test("3. hands the markdown worker the same token, key and CAS identity, and the service bindings reach across", async () => {
+    const portal = await runtime.mf.getBindings("unidocs-portal");
+    const markdown = await runtime.mf.getBindings("unidocs-markdown");
+    expect(markdown.PLATFORM_AGENT_TOKEN).toBe(portal.AGENT_API_TOKEN);
+    expect(markdown.MARKDOWN_OPERATOR_HMAC_KEY).toBe(portal.MARKDOWN_OPERATOR_HMAC_KEY);
+    expect(markdown.PLATFORM_ORIGIN).toBe(portal.PORTAL_ORIGIN);
+    expect(markdown.MARKDOWN_OPERATOR_DOCUMENT_TYPE).toBe("dt-test");
+    expect(markdown.OPERATOR_CAS_ORIGIN).toBe(portal.CAS_ORIGIN);
+    expect(markdown.OPERATOR_CAS_STACK_ID).toBe(runtime.stackFixture.stackId);
+    expect(markdown.OPERATOR_CAS_ISSUER).toBe(runtime.stackFixture.issuer);
+    expect(markdown.OPERATOR_CAS_AUDIENCE).toBe(runtime.stackFixture.audience);
+    expect(markdown.OPERATOR_CAS_SIGNING_KID).toBe(runtime.stackFixture.kid);
+    expect(markdown.OPERATOR_CAS_SIGNING_KEY).toBe(runtime.stackFixture.privateKeyPkcs8);
+
+    // The portal addresses the Operator by the literal validation base URL
+    // (R12); the binding, not DNS, decides where that request lands.
+    const descriptor = await portal.ADMIN_MARKDOWN_SERVICE.fetch("https://unidocs-markdown.shazhou.workers.dev/.well-known/unidocs-operator");
+    expect(descriptor.status).toBe(200);
+    expect((await descriptor.json()).supportedDocumentTypes).toEqual(["dt-test"]);
+
+    const session = await markdown.PLATFORM_SERVICE.fetch(`${markdown.PLATFORM_ORIGIN}/portal/auth/session`);
+    expect(session.status).toBe(200);
+    expect(await session.json()).toMatchObject({ tenantId: "t-local" });
+  });
 });

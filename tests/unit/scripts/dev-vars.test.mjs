@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { mergeDocBindings, readDevVars } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
+import { mergeDocBindings, readDevVars, resolveOperatorSecrets } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
   ADMIN_PORT,
   buildWorkers,
@@ -173,4 +173,25 @@ test("buildWorkers leaves bindings untouched when no extraBindings are given", (
     CAS_STACK_ISSUER: STACK_FIXTURE.issuer,
     CAS_STACK_TRUSTED_JWKS: JSON.stringify(STACK_FIXTURE.jwks),
   });
+});
+
+// The portal and the markdown Operator authenticate each other with these two
+// values. Generated per boot so `pnpm dev portal` needs no setup, but a value
+// someone configured wins — same order as every other service binding — and an
+// empty line means "not configured", not "configured as empty".
+test("Operator loop secrets are generated in the shape both sides accept, unless configured", () => {
+  const generated = resolveOperatorSecrets();
+  expect(generated.operatorHmacKey).toMatch(/^[0-9a-f]{64}$/);
+  expect(generated.agentToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(resolveOperatorSecrets().agentToken).not.toBe(generated.agentToken);
+
+  const key = "ab".repeat(32);
+  const fromFile = resolveOperatorSecrets({ devVars: { AGENT_API_TOKEN: "file-token", MARKDOWN_OPERATOR_HMAC_KEY: key } });
+  expect(fromFile).toEqual({ agentToken: "file-token", operatorHmacKey: key });
+
+  const fromBoth = resolveOperatorSecrets({
+    devVars: { AGENT_API_TOKEN: "file-token", MARKDOWN_OPERATOR_HMAC_KEY: key },
+    processEnv: { AGENT_API_TOKEN: "env-token", MARKDOWN_OPERATOR_HMAC_KEY: "" },
+  });
+  expect(fromBoth).toEqual({ agentToken: "env-token", operatorHmacKey: key });
 });

@@ -17,7 +17,7 @@ import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runt
  */
 
 // Distinct from portal-local-runtime.test.mjs's block and from `pnpm dev portal`.
-const PORTS = { gateway: 19287, admin: 19292, mockOidc: 19293, edge: 19294, portal: 19295, portalBundles: 19296 };
+const PORTS = { gateway: 19287, markdown: 19288, admin: 19292, mockOidc: 19293, edge: 19294, portal: 19295, portalBundles: 19296 };
 const ORIGIN = `http://127.0.0.1:${PORTS.portal}`;
 const SESSION_COOKIE = "__Host-unidocs_tenant";
 const CSRF_COOKIE = "__Host-unidocs_tenant_csrf";

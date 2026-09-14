@@ -544,3 +544,42 @@ test("the bootstrap email can come from .dev.vars, and the environment still win
 test("an empty GOOGLE_OIDC_CLIENT_ID does not blank the placeholder", () => {
   expect(portalWorker({ googleOidcClientId: "" }).bindings.GATEWAY_OIDC_CLIENT_ID).toBe("unidocs-portal-local");
 });
+
+// The portal's webhooks are answered by the markdown Operator worker, so the
+// portal brings that worker up beside it even when markdown was not selected —
+// without touching `parseTargets`, whose shape the dev entry pins.
+test("the portal reserves the markdown Operator's port and bundle without selecting markdown", () => {
+  expect(resolvePorts([], {}, ["portal"]).markdown).toBe(DOC_TYPES.markdown.port);
+  expect(resolvePorts([], { markdown: 19188 }, ["portal"]).markdown).toBe(19188);
+  expect(resolvePorts([], {}, []).markdown).toBeUndefined();
+  const outfiles = targets => targets.map(target => target.outfile).filter(outfile => outfile === "markdown.js");
+  expect(outfiles(bundleTargets([], { services: ["portal"] }))).toEqual(["markdown.js"]);
+  // Selected and implied at once still bundles it once.
+  expect(outfiles(bundleTargets(["markdown"], { services: ["portal"] }))).toEqual(["markdown.js"]);
+});
+
+test("the portal and the markdown Operator are bound to each other by service bindings", () => {
+  const workers = buildWorkers({
+    docTypes: ["docx"], host: "127.0.0.1", ports: { ...BASE_PORTS, ...resolvePorts(["docx"], {}, ["portal"]) },
+    bundleDir: "/tmp/bundle", services: ["portal"],
+    stackFixture: STACK_FIXTURE, capabilityFixture: CAPABILITY_FIXTURE,
+  });
+  const portal = workers.find(worker => worker.name === "unidocs-portal");
+  const markdown = workers.find(worker => worker.name === "unidocs-markdown");
+  const docx = workers.find(worker => worker.name === "unidocs-docx");
+  expect(portal.serviceBindings).toEqual({ ADMIN_MARKDOWN_SERVICE: "unidocs-markdown" });
+  expect(markdown.serviceBindings).toEqual({ CAS_SERVICE: SERVICE_WORKER, PLATFORM_SERVICE: "unidocs-portal" });
+  expect(markdown.bindings.PLATFORM_ORIGIN).toBe(portal.bindings.PORTAL_ORIGIN);
+  expect(markdown.unsafeDirectSockets).toEqual([{ host: "127.0.0.1", port: DOC_TYPES.markdown.port }]);
+  expect(docx.serviceBindings).toEqual({ CAS_SERVICE: SERVICE_WORKER });
+  // The gateway's static registry is still only what was selected.
+  const gateway = workers.find(worker => worker.name === GATEWAY_WORKER);
+  expect(Object.keys(JSON.parse(gateway.bindings.DOC_SERVICES_JSON))).toEqual(["docx"]);
+});
+
+test("without the portal the markdown worker has no platform to call", () => {
+  const markdown = buildWorkers(stackArgs({ docTypes: ["markdown"], ports: { markdown: 8788 } }))
+    .find(worker => worker.name === "unidocs-markdown");
+  expect(markdown.serviceBindings).toEqual({ CAS_SERVICE: SERVICE_WORKER });
+  expect(markdown.bindings.PLATFORM_ORIGIN).toBeUndefined();
+});

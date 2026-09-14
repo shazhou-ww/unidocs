@@ -50,6 +50,15 @@ export const SERVICE_TARGETS = {
        * already builds.
        */
       cas: true,
+      /**
+       * The document type whose Operator worker answers this service's
+       * webhooks and submits back to it. The runtime starts that worker
+       * beside the portal even when the document type was not selected, and
+       * binds the two to each other: `serviceBinding` on the portal (the name
+       * `worker.ts` reads), `PLATFORM_SERVICE` on the Operator. The shared
+       * HMAC key and Agent token are generated in runtime.mjs.
+       */
+      operator: { docType: "markdown", serviceBinding: "ADMIN_MARKDOWN_SERVICE" },
       bundlePort: PORTAL_BUNDLE_PORT,
       /**
        * Optional .dev.vars file merged into this worker's bindings — the
@@ -91,6 +100,25 @@ export function expandServiceTarget(name) {
 /** Components of the selected targets that run as a Miniflare worker. */
 export function serviceWorkers(names) {
   return names.flatMap(expandServiceTarget).filter(component => component.entry);
+}
+
+/** The service worker whose Operator is `docType`, or undefined. */
+export function operatorPlatform(docType, services) {
+  return serviceWorkers(services).find(component => component.operator?.docType === docType);
+}
+
+/**
+ * Document types the selected services need running as their Operators but
+ * that `docTypes` did not select, in registry order and without duplicates.
+ * They are started as workers only: the gateway's registry stays `docTypes`.
+ */
+export function operatorDocTypes(docTypes, services) {
+  const implied = [];
+  for (const component of serviceWorkers(services)) {
+    const docType = component.operator?.docType;
+    if (docType && !docTypes.includes(docType) && !implied.includes(docType)) implied.push(docType);
+  }
+  return implied;
 }
 
 /** Components of the selected targets that run as a Vite dev server. */

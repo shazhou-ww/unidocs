@@ -3,12 +3,17 @@ import { startLocalRuntime } from "../../../stacks/unidocs-cloudflare/local/runt
 
 let runtime;
 
+// Every port overridden: the defaults are exactly the ones a running
+// `pnpm dev portal` holds (8787, 8788, 8792-8796), and a collision fails the
+// boot rather than this test's assertions.
+const PORTS = { gateway: 19387, markdown: 19388, admin: 19392, mockOidc: 19393, edge: 19394, portal: 19395, portalBundles: 19396 };
+
 beforeAll(async () => {
-  runtime = await startLocalRuntime({ docTypes: [], services: ["portal"] });
+  runtime = await startLocalRuntime({ docTypes: [], services: ["portal"], ports: PORTS });
 }, 120_000);
 
 afterAll(async () => {
-  await runtime?.mf?.dispose();
+  await runtime?.dispose();
 });
 
 describe("portal worker CAS bindings", () => {
