@@ -169,9 +169,13 @@ that write root references carry it」。CAS 会拒绝任何不带 refDomain 的
 写入，无论 token 持有什么权限。Platform 是 stack authority，Agent 不是——所以 Agent
 写得了节点，动不了业务根，GC 的最终裁量权仍在 Platform。
 
-「Platform 不写 blob 内容」因此是**代码层面的事实而非权限层面的强制**：
-`snapshot-store.ts` 里没有任何 `storeBlob` 调用。这一条靠 code review 维持，
-测试替身验证不出来——它只有真连 CAS 才会暴露。
+「Platform 不写 blob 内容」因此是**代码层面的事实而非权限层面的强制**：约束落在
+`SnapshotStore` 的接口面上——它只暴露 `read` / `retain` / `release`，没有 `storeBlob`。
+拿着同一枚 capability 的 `getToken` 去喂裸的 `createCasBlobClient`，就绕过了这条保证。
+
+**这条执行事实是可测的，应当被测**（例如断言 `SnapshotStore` 的键集恰为
+`{read, retain, release}`），不要只靠 code review。真连 CAS 才暴露的是**权限事实**
+（retain 需要 `cas:write`），两者是不同的东西。
 
 **字段名需要一行映射**：`@unicas/tenant-blob-client` 的 `CasBlobRef` 是
 `{ hash, size, contentType }`，tenant 契约的 `CasBlobRefSchema` 是
