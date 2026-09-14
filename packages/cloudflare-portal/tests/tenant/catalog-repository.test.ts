@@ -1,12 +1,10 @@
-import { readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import { DocumentContractRecordSchema, PublicDocumentTypeSchema } from "@unidocs/protocol-tenant-portal";
 import { D1TenantCatalogRepository } from "../../src/tenant/catalog-repository.js";
 import { encodeCursor } from "../../src/tenant/cursor.js";
 import { databaseDouble } from "./d1-double.js";
+import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const context = { tenantId: "t-local", principalId: "user-1", transport: "session" as const };
 
@@ -256,39 +254,16 @@ describe("D1TenantCatalogRepository.getDocumentContract", () => {
  * the listing is the repository's own `enabled` predicate.
  */
 describe("D1TenantCatalogRepository.listDocumentTypes - enablement (real D1, A3)", () => {
-  let miniflare: Miniflare;
+  let real: RealD1;
   let db: D1Database;
 
-  function collapseToOneStatementPerLine(sql: string): string {
-    return sql
-      .split(";")
-      .map(statement => statement.replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-      .map(statement => `${statement};`)
-      .join("\n");
-  }
-
   beforeEach(async () => {
-    miniflare = new Miniflare(convertV4MiniflareOptions({
-      workers: [{
-        name: "catalog-repository-enablement-test",
-        modules: true,
-        script: "export default { fetch() { return new Response('ok'); } };",
-        compatibilityDate: "2025-08-17",
-        d1Databases: { DB: `catalog-repository-enablement-${crypto.randomUUID()}` },
-      }],
-    }));
-    await miniflare.ready;
-    db = await miniflare.getD1Database("DB", "catalog-repository-enablement-test") as unknown as D1Database;
-    const migrationsDir = fileURLToPath(new URL("../../migrations", import.meta.url));
-    const files = (await readdir(migrationsDir)).filter(name => name.endsWith(".sql")).sort();
-    for (const file of files) {
-      await db.exec(collapseToOneStatementPerLine(await readFile(`${migrationsDir}/${file}`, "utf8")));
-    }
+    real = await startRealD1();
+    db = real.db;
   });
 
   afterEach(async () => {
-    await miniflare.dispose();
+    await real.dispose();
   });
 
   async function seedDocumentType(documentType: string, enabled: boolean) {

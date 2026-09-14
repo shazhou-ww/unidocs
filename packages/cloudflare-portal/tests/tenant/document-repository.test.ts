@@ -1,11 +1,9 @@
-import { readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import { TenantOperationError } from "@unidocs/portal-service";
 import { D1TenantDocumentRepository, VersionConflictError } from "../../src/tenant/document-repository.js";
 import { databaseDouble } from "./d1-double.js";
+import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const context = { tenantId: "t-local", principalId: "user-1", transport: "session" as const };
 
@@ -384,36 +382,16 @@ describe("D1TenantDocumentRepository.listAuditEvents", () => {
  * technique `thread-repository.test.ts`'s "(real D1)" blocks already use.
  */
 describe("D1TenantDocumentRepository.moveCurrentVersion (real D1)", () => {
-  let miniflare: Miniflare;
+  let real: RealD1;
   let db: D1Database;
 
-  function collapseToOneStatementPerLine(sql: string): string {
-    return sql
-      .split(";")
-      .map(statement => statement.replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-      .map(statement => `${statement};`)
-      .join("\n");
-  }
-
   beforeEach(async () => {
-    miniflare = new Miniflare(convertV4MiniflareOptions({
-      workers: [{
-        name: "document-repository-move-test",
-        modules: true,
-        script: "export default { fetch() { return new Response('ok'); } };",
-        compatibilityDate: "2025-08-17",
-        d1Databases: { DB: `document-repository-move-${crypto.randomUUID()}` },
-      }],
-    }));
-    await miniflare.ready;
-    db = await miniflare.getD1Database("DB", "document-repository-move-test") as unknown as D1Database;
-    const migration = fileURLToPath(new URL("../../migrations/0012_tenant.sql", import.meta.url));
-    await db.exec(collapseToOneStatementPerLine(await readFile(migration, "utf8")));
+    real = await startRealD1();
+    db = real.db;
   });
 
   afterEach(async () => {
-    await miniflare.dispose();
+    await real.dispose();
   });
 
   async function seedDocument(documentId: string, currentVersionIdx: number | null) {
@@ -540,39 +518,16 @@ describe("D1TenantDocumentRepository.moveCurrentVersion (real D1)", () => {
  * here.)
  */
 describe("D1TenantDocumentRepository.create - document_type enablement (real D1, A4)", () => {
-  let miniflare: Miniflare;
+  let real: RealD1;
   let db: D1Database;
 
-  function collapseToOneStatementPerLine(sql: string): string {
-    return sql
-      .split(";")
-      .map(statement => statement.replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-      .map(statement => `${statement};`)
-      .join("\n");
-  }
-
   beforeEach(async () => {
-    miniflare = new Miniflare(convertV4MiniflareOptions({
-      workers: [{
-        name: "document-repository-create-test",
-        modules: true,
-        script: "export default { fetch() { return new Response('ok'); } };",
-        compatibilityDate: "2025-08-17",
-        d1Databases: { DB: `document-repository-create-${crypto.randomUUID()}` },
-      }],
-    }));
-    await miniflare.ready;
-    db = await miniflare.getD1Database("DB", "document-repository-create-test") as unknown as D1Database;
-    const migrationsDir = fileURLToPath(new URL("../../migrations", import.meta.url));
-    const files = (await readdir(migrationsDir)).filter(name => name.endsWith(".sql")).sort();
-    for (const file of files) {
-      await db.exec(collapseToOneStatementPerLine(await readFile(`${migrationsDir}/${file}`, "utf8")));
-    }
+    real = await startRealD1();
+    db = real.db;
   });
 
   afterEach(async () => {
-    await miniflare.dispose();
+    await real.dispose();
   });
 
   async function seedDocumentType(documentType: string, enabled: boolean) {

@@ -1,13 +1,11 @@
-import { readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import type { CommentRecord } from "@unidocs/protocol-tenant-portal";
 import { TenantOperationError } from "@unidocs/portal-service";
 import { D1TenantThreadRepository } from "../../src/tenant/thread-repository.js";
 import { encodeCursor } from "../../src/tenant/cursor.js";
 import { databaseDouble } from "./d1-double.js";
+import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const context = { tenantId: "t-local", principalId: "user-1", transport: "session" as const };
 
@@ -198,37 +196,16 @@ describe("D1TenantThreadRepository.list (double: paging, projection, bound args)
  * for this package family), not the double.
  */
 describe("D1TenantThreadRepository.list - open derivation (real D1)", () => {
-  let miniflare: Miniflare;
+  let real: RealD1;
   let db: D1Database;
 
-  /** D1's exec() runs one statement per line; the migration file is multi-line CREATE TABLEs. */
-  function collapseToOneStatementPerLine(sql: string): string {
-    return sql
-      .split(";")
-      .map(statement => statement.replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-      .map(statement => `${statement};`)
-      .join("\n");
-  }
-
   beforeEach(async () => {
-    miniflare = new Miniflare(convertV4MiniflareOptions({
-      workers: [{
-        name: "thread-repository-test",
-        modules: true,
-        script: "export default { fetch() { return new Response('ok'); } };",
-        compatibilityDate: "2025-08-17",
-        d1Databases: { DB: `thread-repository-${crypto.randomUUID()}` },
-      }],
-    }));
-    await miniflare.ready;
-    db = await miniflare.getD1Database("DB", "thread-repository-test") as unknown as D1Database;
-    const migration = fileURLToPath(new URL("../../migrations/0012_tenant.sql", import.meta.url));
-    await db.exec(collapseToOneStatementPerLine(await readFile(migration, "utf8")));
+    real = await startRealD1();
+    db = real.db;
   });
 
   afterEach(async () => {
-    await miniflare.dispose();
+    await real.dispose();
   });
 
   async function seedDocument(tenantId: string, documentId: string) {
@@ -346,39 +323,16 @@ describe("D1TenantThreadRepository.list - open derivation (real D1)", () => {
  * exist alongside the tenant tables.
  */
 describe("D1TenantThreadRepository.loadCommentAnchor (real D1)", () => {
-  let miniflare: Miniflare;
+  let real: RealD1;
   let db: D1Database;
 
-  function collapseToOneStatementPerLine(sql: string): string {
-    return sql
-      .split(";")
-      .map(statement => statement.replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-      .map(statement => `${statement};`)
-      .join("\n");
-  }
-
   beforeEach(async () => {
-    miniflare = new Miniflare(convertV4MiniflareOptions({
-      workers: [{
-        name: "thread-repository-anchor-test",
-        modules: true,
-        script: "export default { fetch() { return new Response('ok'); } };",
-        compatibilityDate: "2025-08-17",
-        d1Databases: { DB: `thread-repository-anchor-${crypto.randomUUID()}` },
-      }],
-    }));
-    await miniflare.ready;
-    db = await miniflare.getD1Database("DB", "thread-repository-anchor-test") as unknown as D1Database;
-    const migrationsDir = fileURLToPath(new URL("../../migrations", import.meta.url));
-    const files = (await readdir(migrationsDir)).filter(name => name.endsWith(".sql")).sort();
-    for (const file of files) {
-      await db.exec(collapseToOneStatementPerLine(await readFile(`${migrationsDir}/${file}`, "utf8")));
-    }
+    real = await startRealD1();
+    db = real.db;
   });
 
   afterEach(async () => {
-    await miniflare.dispose();
+    await real.dispose();
   });
 
   async function seedDocumentType(documentType: string) {
@@ -482,39 +436,19 @@ describe("D1TenantThreadRepository.loadCommentAnchor (real D1)", () => {
  * appending to a nonexistent thread fail without any extra existence check.
  */
 describe("D1TenantThreadRepository.create / get / appendComment (real D1)", () => {
-  let miniflare: Miniflare;
+  let real: RealD1;
   let db: D1Database;
 
-  function collapseToOneStatementPerLine(sql: string): string {
-    return sql
-      .split(";")
-      .map(statement => statement.replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-      .map(statement => `${statement};`)
-      .join("\n");
-  }
-
   beforeEach(async () => {
-    miniflare = new Miniflare(convertV4MiniflareOptions({
-      workers: [{
-        name: "thread-repository-crud-test",
-        modules: true,
-        script: "export default { fetch() { return new Response('ok'); } };",
-        compatibilityDate: "2025-08-17",
-        d1Databases: { DB: `thread-repository-crud-${crypto.randomUUID()}` },
-      }],
-    }));
-    await miniflare.ready;
-    db = await miniflare.getD1Database("DB", "thread-repository-crud-test") as unknown as D1Database;
-    const migration = fileURLToPath(new URL("../../migrations/0012_tenant.sql", import.meta.url));
-    await db.exec(collapseToOneStatementPerLine(await readFile(migration, "utf8")));
+    real = await startRealD1();
+    db = real.db;
     await db.prepare(
       "INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at) VALUES (?, ?, ?, ?, ?, ?)",
     ).bind("t-local", "doc-1", "Doc", "markdown", null, 0).run();
   });
 
   afterEach(async () => {
-    await miniflare.dispose();
+    await real.dispose();
   });
 
   const messageContent = { text: "hi", richContent: null, attachments: [] };
