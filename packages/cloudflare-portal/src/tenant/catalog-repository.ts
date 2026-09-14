@@ -29,16 +29,7 @@ interface DocumentContractRow {
  * `PublicDocumentType`: no join is needed.
  */
 export class D1TenantCatalogRepository implements TenantCatalogRepository {
-  /**
-   * Mirrors the constructor shape of the admin bundle repositories
-   * (`D1TypeCardBundleRepository`, `D1ViewBundleRepository`), which consult
-   * `bundleOrigin` to build a bundle's absolute URL at upload time. A
-   * registration's `typeCardBundle.bundleUrl` is already that absolute URL,
-   * so projecting the catalog never needs to consult it here; it is accepted
-   * for constructor-signature parity with those repositories and for any
-   * future caller that wires this repository the same way.
-   */
-  constructor(private readonly database: D1Database, private readonly bundleOrigin: string) {}
+  constructor(private readonly database: D1Database) {}
 
   async listDocumentTypes(_context: TenantContext, query: PaginationQuery): Promise<ListPublicDocumentTypesResponse> {
     let before: string | null = null;
@@ -80,19 +71,32 @@ export class D1TenantCatalogRepository implements TenantCatalogRepository {
 /**
  * Builds one `PublicDocumentType` from a row's registration, or `null` when
  * the type must not be published: any of the three current selections
- * (Type Card bundle, View bundle, built-in Operator) is missing, or the
- * View and the Operator share no supported contract revision. Every result
- * that does survive is run through `PublicDocumentTypeSchema.parse()`, so a
- * malformed projection fails here rather than reaching a caller.
+ * (Type Card bundle, View bundle, built-in Operator) is missing, the View and
+ * the Operator share no supported contract revision, or the registration is
+ * structurally broken in a way that makes it impossible to build a valid
+ * projection at all (a field access throws, or the assembled record fails
+ * `PublicDocumentTypeSchema.parse()`). All three dispositions are the same
+ * from a caller's point of view: this one document type is not ready to be
+ * listed. A single corrupt admin row must not turn into an uncoded 500 that
+ * denies the whole catalog page to every tenant, so failures are caught here
+ * and turned into an omission rather than left to propagate.
  *
  * The registration itself is only `JSON.parse`d, not re-validated against
  * `DocumentTypeRegistrationSchema`: it was already validated by the admin
  * write path before being stored, and this projection reads only a few of
- * its fields, so re-validating the whole record on every catalog read would
- * reject nothing a corrupted row wouldn't already fail at the final
- * `PublicDocumentTypeSchema.parse()` below (or throw trying to read it).
+ * its fields. Whatever that skipped validation would have caught, the
+ * try/catch below and the final schema parse still catch before anything
+ * reaches a caller.
  */
 function projectPublicDocumentType(row: DocumentTypeRow): PublicDocumentType | null {
+  try {
+    return buildPublicDocumentType(row);
+  } catch {
+    return null;
+  }
+}
+
+function buildPublicDocumentType(row: DocumentTypeRow): PublicDocumentType | null {
   const registration = JSON.parse(row.registration_json) as DocumentTypeRegistration;
   const { typeCardBundle, viewBundle, builtinOperator } = registration;
   if (!typeCardBundle || !viewBundle || !builtinOperator) return null;
