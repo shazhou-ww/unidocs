@@ -16,14 +16,19 @@
   ],
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "clean": "rimraf --glob dist \"*.tsbuildinfo\""
   },
   "dependencies": {
-    "@unidocs/protocol": "workspace:*"
+    "@orpc/contract": "1.15.0",
+    "@unidocs/protocol": "workspace:*",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "typescript": "^5.9.0"
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.7"
   },
   "publishConfig": {
     "main": "./dist/index.js",

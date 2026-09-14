@@ -88,3 +88,7 @@ export type {
 } from "./platform-hmac.js";
 export { OperatorProbeError, createOperatorProbeRequest, signOperatorProbeReceipt, verifyOperatorProbeReceipt, verifyOperatorProbeRequest } from "./operator-probe.js";
 export type { OperatorProbeReceipt, OperatorProbeRequestBody } from "./operator-probe.js";
+export {
+  OperatorWebhookSignatureHeader, OperatorWebhookTimestampHeader,
+  signOperatorWebhook, verifyOperatorWebhook,
+} from "./operator-webhook.js";

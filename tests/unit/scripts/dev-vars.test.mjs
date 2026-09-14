@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { mergeDocBindings, readDevVars } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
+import { mergeDocBindings, readDevVars, resolveOperatorSecrets } from "../../../stacks/unidocs-cloudflare/local/runtime.mjs";
 import {
   ADMIN_PORT,
   buildWorkers,
@@ -173,4 +173,82 @@ test("buildWorkers leaves bindings untouched when no extraBindings are given", (
     CAS_STACK_ISSUER: STACK_FIXTURE.issuer,
     CAS_STACK_TRUSTED_JWKS: JSON.stringify(STACK_FIXTURE.jwks),
   });
+});
+
+// The portal and the markdown Operator authenticate each other with these two
+// values. Generated per boot so `pnpm dev portal` needs no setup, but a value
+// someone configured wins — same order as every other service binding — and an
+// empty line means "not configured", not "configured as empty".
+test("Operator loop secrets are generated in the shape both sides accept, unless configured", () => {
+  const generated = resolveOperatorSecrets();
+  expect(generated.operatorHmacKey).toMatch(/^[0-9a-f]{64}$/);
+  expect(generated.agentToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(resolveOperatorSecrets().agentToken).not.toBe(generated.agentToken);
+
+  const key = "ab".repeat(32);
+  const fromFile = resolveOperatorSecrets({ devVars: { AGENT_API_TOKEN: "file-token", MARKDOWN_OPERATOR_HMAC_KEY: key } });
+  expect(fromFile).toEqual({ agentToken: "file-token", operatorHmacKey: key });
+
+  const fromBoth = resolveOperatorSecrets({
+    devVars: { AGENT_API_TOKEN: "file-token", MARKDOWN_OPERATOR_HMAC_KEY: key },
+    processEnv: { UNIDOCS_AGENT_API_TOKEN: "env-token", UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY: "" },
+  });
+  expect(fromBoth).toEqual({ agentToken: "env-token", operatorHmacKey: key });
+});
+
+// The process environment is shared with everything else the developer runs,
+// so the overrides carry the same UNIDOCS_ prefix as
+// UNIDOCS_PORTAL_BOOTSTRAP_EMAIL. `.dev.vars` reaches only the portal and keeps
+// the binding names. A bare AGENT_API_TOKEN left in some unrelated shell must
+// not silently become the local Agent's token.
+test("Operator loop secrets are overridden from the environment only under their UNIDOCS_ names", () => {
+  const envKey = "cd".repeat(32);
+  const fileKey = "ab".repeat(32);
+  const prefixed = resolveOperatorSecrets({
+    devVars: { AGENT_API_TOKEN: "file-token", MARKDOWN_OPERATOR_HMAC_KEY: fileKey },
+    processEnv: { UNIDOCS_AGENT_API_TOKEN: "env-token", UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY: envKey },
+  });
+  expect(prefixed).toEqual({ agentToken: "env-token", operatorHmacKey: envKey });
+
+  const bare = resolveOperatorSecrets({
+    devVars: { AGENT_API_TOKEN: "file-token", MARKDOWN_OPERATOR_HMAC_KEY: fileKey },
+    processEnv: { AGENT_API_TOKEN: "stray-token", MARKDOWN_OPERATOR_HMAC_KEY: envKey },
+  });
+  expect(bare).toEqual({ agentToken: "file-token", operatorHmacKey: fileKey });
+
+  const bareOnly = resolveOperatorSecrets({ processEnv: { AGENT_API_TOKEN: "stray-token", MARKDOWN_OPERATOR_HMAC_KEY: envKey } });
+  expect(bareOnly.agentToken).not.toBe("stray-token");
+  expect(bareOnly.operatorHmacKey).not.toBe(envKey);
+});
+
+// A configured key in any other shape leaves the Operator answering 503 and
+// every validation failing far from the cause. Refused at startup instead,
+// naming the variable and where it came from — and never echoing the value,
+// which is a secret.
+test("a configured Operator HMAC key that is not 64 lowercase hex characters fails startup without echoing it", () => {
+  const thrownMessage = (resolve) => {
+    try { resolve(); } catch (error) { return String(error?.message); }
+    return null;
+  };
+  const bad = "AB".repeat(32);
+  const fromEnv = thrownMessage(() => resolveOperatorSecrets({ processEnv: { UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY: bad } }));
+  expect(fromEnv, "a malformed key from the environment must throw").not.toBeNull();
+  expect(fromEnv).toMatch(/UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY/);
+  expect(fromEnv).toMatch(/environment/);
+  expect(fromEnv).not.toContain(bad);
+
+  const secretish = "not-hex-secret-value";
+  const fromFile = thrownMessage(() => resolveOperatorSecrets({ devVars: { MARKDOWN_OPERATOR_HMAC_KEY: secretish } }));
+  expect(fromFile, "a malformed key from .dev.vars must throw").not.toBeNull();
+  expect(fromFile).toMatch(/\bMARKDOWN_OPERATOR_HMAC_KEY/);
+  expect(fromFile).not.toMatch(/UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY/);
+  expect(fromFile).toMatch(/\.dev\.vars/);
+  expect(fromFile).not.toContain(secretish);
+
+  // The environment wins, so a good environment key masks a bad file key, and
+  // only the key is shape-checked: the token is opaque.
+  expect(resolveOperatorSecrets({
+    devVars: { MARKDOWN_OPERATOR_HMAC_KEY: secretish },
+    processEnv: { UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY: "ef".repeat(32), UNIDOCS_AGENT_API_TOKEN: "any shape at all" },
+  })).toEqual({ agentToken: "any shape at all", operatorHmacKey: "ef".repeat(32) });
 });

@@ -133,13 +133,25 @@ describe("DocumentPage", () => {
     expect(within(p).getAllByText("这一句还能再收紧吗？").length).toBeGreaterThan(0);
   });
 
-  it("文档还没有 current version 时给初始化空态", async () => {
+  // 设计文档 §5.4：首版本产生前不能创建 thread 或追加 comment——use-document.ts
+  // 对这种文档返回 currentVersion: null，页面要据此显示「等待 Operator 初始化」，
+  // 并且不能出现任何真能点的评论入口（点了也只会打出一个注定 404 的请求）。
+  it("文档还没有 current version 时显示「等待 Operator 初始化」，且没有可用的评论入口", async () => {
     const client = createTenantPortalClient({
       tenantId: "t1",
       transport: createMemoryTransport({ seed: { documents: [{ documentId: "doc-new", name: "新作品", versions: [], threads: [] }] } }),
     });
     render(<ClientProvider client={client}><DocumentPage documentId="doc-new" /></ClientProvider>);
 
-    expect(await screen.findByText("这件作品还在初始化，暂时没有可读的版本。")).toBeInTheDocument();
+    expect(await screen.findByText(/等待 Operator 初始化/)).toBeInTheDocument();
+
+    const panel = await screen.findByRole("complementary", { name: "讨论" });
+    // 唯一两个能发起 createThread/appendComment 的入口：ThreadCard 的「回复」
+    // （没有 thread 可回复）和 ViewHost 选区触发的「添加评论」（currentVersion
+    // 为 null 时右栏根本不挂载带 host 的 ViewHost，见 document.tsx）。
+    expect(within(panel).queryByRole("button", { name: "回复" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "添加评论" })).not.toBeInTheDocument();
+    expect(within(panel).queryByText(/在正文里选中一段内容即可添加评论/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "当前版本" })).not.toBeInTheDocument();
   });
 });

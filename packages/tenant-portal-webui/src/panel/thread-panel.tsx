@@ -91,7 +91,12 @@ export function ThreadPanel(props: {
       )}
 
       {visible.length === 0 && props.orphanedDrafts.length === 0 && (
-        <p className="muted">暂无讨论。在正文里选中一段内容即可添加评论。</p>
+        <p className="muted">
+          {props.currentVersionIdx === null
+            // 首版本产生前不能评论（§5.4）——不邀请一个注定失败的操作。
+            ? "这件作品还没有版本，暂时不能评论。"
+            : "暂无讨论。在正文里选中一段内容即可添加评论。"}
+        </p>
       )}
 
       {visible.map(({ detail, state }) => {

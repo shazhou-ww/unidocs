@@ -20,13 +20,22 @@
     "BUNDLE_ORIGIN": "https://bundles.shazhou.work",
     "GATEWAY_OIDC_ISSUER": "https://accounts.google.com",
     "GATEWAY_OIDC_CLIENT_ID": "",
-    "PORTAL_BOOTSTRAP_EMAIL": ""
+    "PORTAL_BOOTSTRAP_EMAIL": "",
+    "CAS_ORIGIN": "",
+    "CAS_STACK_ID": "",
+    "CAS_ISSUER": "",
+    "CAS_AUDIENCE": "",
+    "CAS_REF_DOMAIN": "",
+    "CAS_SIGNING_KID": "",
+    "AGENT_TENANT_ID": ""
   },
   "secrets": {
     "required": [
       "GATEWAY_OIDC_CLIENT_SECRET",
       "OAUTH_STATE_ENCRYPTION_KEY",
-      "MARKDOWN_OPERATOR_HMAC_KEY"
+      "MARKDOWN_OPERATOR_HMAC_KEY",
+      "CAS_SIGNING_KEY",
+      "AGENT_API_TOKEN"
     ]
   },
   "d1_databases": [

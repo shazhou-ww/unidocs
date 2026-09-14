@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@unidocs/protocol-admin-portal": "workspace:*",
+    "@unidocs/protocol-platform": "workspace:*",
     "@unidocs/protocol-tenant-portal": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
     "@zip.js/zip.js": "^2.13.1",

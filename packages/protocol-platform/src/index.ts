@@ -1,5 +1,6 @@
 /**
- * Public type-only entrypoint for every @unidocs/protocol-platform contract.
+ * Public entrypoint for every @unidocs/protocol-platform contract: the type
+ * surface, the runtime schemas that mirror it, and the oRPC contracts.
  */
 export {
 	DocumentContentFormatVersion,
@@ -16,3 +17,14 @@ export type * from "./messages.js";
 export type * from "./operator.js";
 export type * from "./resources.js";
 export type * from "./view.js";
+export * from "./schemas.js";
+export {
+	agentApiContract,
+	AgentApiErrorMap,
+	AgentApiV1BasePath,
+	createSubmissionContract,
+	getSubmissionContract,
+	notifyDocumentContract,
+	operatorWebhookContract,
+} from "./contract.js";
+export type { AgentApiContract, OperatorWebhookContract } from "./contract.js";

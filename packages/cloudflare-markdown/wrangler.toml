@@ -22,6 +22,11 @@ CAPABILITY_TTL_SECONDS = "120"
 CAPABILITY_MAX_LIFETIME_SECONDS = "1800"
 CAPABILITY_CLOCK_SKEW_SECONDS = "30"
 MARKDOWN_OPERATOR_DOCUMENT_TYPE = "dt-292d2d45-fbd9-4392-99cd-f46474679667"
+# Operator webhook loop (tenant data plane): PLATFORM_SERVICE, PLATFORM_ORIGIN,
+# PLATFORM_AGENT_TOKEN and OPERATOR_CAS_* are injected by the local runtime
+# (stacks/unidocs-cloudflare/local/runtime.mjs) and are intentionally not
+# deployed in v0: production does not route the tenant data plane. Without
+# them the webhook's scheduled work fails and is logged; nothing else breaks.
 
 [exports.MarkdownEditor]
 type = "durable-object"
@@ -52,3 +57,4 @@ service = "unidocs-cas"
 #                                RFC 8414 discovery from CAS_STACK_ISSUER
 #   MARKDOWN_OPERATOR_HMAC_KEY   64 lowercase hex characters shared only with
 #                                the Admin Portal Operator validation target
+#                                and the Portal's webhook dispatcher

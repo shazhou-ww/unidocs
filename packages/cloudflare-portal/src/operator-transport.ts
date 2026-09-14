@@ -28,10 +28,32 @@ function canonicalBaseUrl(value: string): string {
   return baseUrl;
 }
 
-function canonicalProbePath(value: string): string {
+/**
+ * A path on the Operator's origin. A configured probe path is literal, so it
+ * admits no `%` at all; a webhook path carries `encodeURIComponent`-escaped
+ * tenant and document ids, so it admits well-formed `%XX` escapes. Either way
+ * the path must survive URL parsing unchanged, which rules out dot segments
+ * (`%2e%2e` included, since the parser folds those too).
+ */
+function canonicalPath(value: string, escapes: "none" | "percent-encoded" = "none"): string {
   const parsed = new URL(value, "https://operator.invalid");
-  if (!value.startsWith("/") || value.startsWith("//") || value === "/" || /[%\\\s?#]/.test(value) || parsed.origin !== "https://operator.invalid" || parsed.pathname !== value || value.includes("//") || value === OPERATOR_DISCOVERY_PATH) throw new OperatorTransportError();
+  const badEscape = escapes === "none" ? /%/.test(value) : /%(?![0-9A-Fa-f]{2})/.test(value);
+  if (!value.startsWith("/") || value.startsWith("//") || value === "/" || badEscape || /[\\\s?#]/.test(value) || parsed.origin !== "https://operator.invalid" || parsed.pathname !== value || value.includes("//") || value === OPERATOR_DISCOVERY_PATH) throw new OperatorTransportError();
   return value;
+}
+
+/**
+ * The request headers a caller may add to a probe or a webhook: `x-unidocs-`
+ * names only, bounded, printable, and never a delegated credential. Shared by
+ * both operations so the rules cannot drift apart.
+ */
+function setOperatorHeaders(headers: Headers, extra: Readonly<Record<string, string>>): void {
+  let bytes = 0;
+  for (const [name, value] of Object.entries(extra)) {
+    bytes += name.length + value.length;
+    if (!/^x-unidocs-[a-z0-9-]+$/.test(name) || name.length > 128 || value.length > 1024 || bytes > 8192 || /[^\x20-\x7e]/.test(value) || name === "x-unidocs-cas-authorization" || name === "x-unidocs-platform-authorization") throw new OperatorTransportError();
+    headers.set(name, value);
+  }
 }
 
 export function createBoundOperatorTransport(targets: readonly OperatorServiceTarget[], timeoutMs: number = OPERATOR_IO_LIMITS.timeoutMs) {
@@ -39,12 +61,12 @@ export function createBoundOperatorTransport(targets: readonly OperatorServiceTa
   const allowed = new Map<string, OperatorServiceTarget>();
   for (const target of targets) {
     const baseUrl = canonicalBaseUrl(target.baseUrl);
-    const probePath = canonicalProbePath(target.probePath);
+    const probePath = canonicalPath(target.probePath);
     if (allowed.has(baseUrl)) throw new TypeError("Duplicate Operator target");
     allowed.set(baseUrl, { baseUrl, probePath, service: target.service });
   }
 
-  async function send(baseUrl: string, operation: "discovery" | "probe", body?: Uint8Array, proofHeaders?: Readonly<Record<string, string>>): Promise<OperatorTransportResponse> {
+  async function send(baseUrl: string, operation: "discovery" | "probe" | "webhook", body?: Uint8Array, proofHeaders?: Readonly<Record<string, string>>, webhookPath?: string): Promise<OperatorTransportResponse> {
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let complete = false;
     let deadlineExpired = false;
@@ -54,17 +76,16 @@ export function createBoundOperatorTransport(targets: readonly OperatorServiceTa
       const target = allowed.get(canonicalBaseUrl(baseUrl));
       if (!target) throw new OperatorTransportError();
       if (operation === "probe" && (!body || body.byteLength > OPERATOR_IO_LIMITS.probeBytes)) throw new OperatorTransportError();
+      if (operation === "webhook" && !body) throw new OperatorTransportError();
+      const path = operation === "discovery" ? OPERATOR_DISCOVERY_PATH
+        : operation === "probe" ? target.probePath
+        : canonicalPath(webhookPath ?? "", "percent-encoded");
       const headers = new Headers({ Accept: "application/json" });
-      if (operation === "probe") {
+      if (operation !== "discovery") {
         headers.set("Content-Type", "application/json");
-        let proofBytes = 0;
-        for (const [name, value] of Object.entries(proofHeaders ?? {})) {
-          proofBytes += name.length + value.length;
-          if (!/^x-unidocs-[a-z0-9-]+$/.test(name) || name.length > 128 || value.length > 1024 || proofBytes > 8192 || /[^\x20-\x7e]/.test(value) || name === "x-unidocs-cas-authorization" || name === "x-unidocs-platform-authorization") throw new OperatorTransportError();
-          headers.set(name, value);
-        }
+        setOperatorHeaders(headers, proofHeaders ?? {});
       }
-      const request = new Request(`${target.baseUrl}${operation === "discovery" ? OPERATOR_DISCOVERY_PATH : target.probePath}`, {
+      const request = new Request(`${target.baseUrl}${path}`, {
         method: operation === "discovery" ? "GET" : "POST",
         headers,
         ...(body ? { body: new Uint8Array(body) } : {}),
@@ -123,5 +144,7 @@ export function createBoundOperatorTransport(targets: readonly OperatorServiceTa
   return {
     discovery: (baseUrl: string) => send(baseUrl, "discovery"),
     probe: (baseUrl: string, body: Uint8Array, proofHeaders: Readonly<Record<string, string>>) => send(baseUrl, "probe", body, proofHeaders),
+    /** POST `body` to `baseUrl + path`; `path` may carry percent-encoded segments. */
+    webhook: (baseUrl: string, path: string, body: Uint8Array, headers: Readonly<Record<string, string>>) => send(baseUrl, "webhook", body, headers, path),
   };
 }
