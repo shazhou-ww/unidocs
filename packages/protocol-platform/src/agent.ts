@@ -25,6 +25,15 @@ import type {
 } from "./common.js";
 import type { ReplyRecord, VersionRecord } from "./resources.js";
 
+/**
+ * `cas:lease` is not a narrower grant than `cas:write` on the CAS side: CAS
+ * (`unicas-packages/service/src/tenant-auth.ts`) maps both `lease` and
+ * `updateRootRefs` onto the same `casWritePermission`, so a capability minted
+ * for `cas:lease` can write anything a `cas:write` capability can. The real
+ * boundary that stops an Agent from moving a business root reference is that
+ * the Platform never puts a `refDomain` claim in an Agent's capability — CAS
+ * gates Root Refs writes on `refDomain`, not on the permission set.
+ */
 export type AgentScope =
   | "documents:read"
   | "cas:read"

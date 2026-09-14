@@ -20,6 +20,7 @@ export type * from "./view.js";
 export * from "./schemas.js";
 export {
 	agentApiContract,
+	AgentApiErrorMap,
 	AgentApiV1BasePath,
 	createSubmissionContract,
 	getSubmissionContract,

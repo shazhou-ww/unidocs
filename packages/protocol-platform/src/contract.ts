@@ -15,12 +15,29 @@ const ErrorDataSchema = z.object({
   requestId: IdSchema,
 }).readonly();
 
-const agentProcedure = oc.errors({
+/**
+ * Every business error code an Agent-facing endpoint can raise, in one place,
+ * so an HTTP adapter (the submissions adapter, a later slice) can map codes
+ * to statuses without re-deriving this table. Mirrors `TenantApiErrorMap` in
+ * `@unidocs/protocol-tenant-portal` and `AdminApiErrorMap` in
+ * `@unidocs/protocol-admin-portal`.
+ */
+export const AgentApiErrorMap = {
   INVALID_REQUEST: { status: 400, message: "The request is invalid", data: ErrorDataSchema },
   UNAUTHORIZED: { status: 401, message: "Agent authentication is required", data: ErrorDataSchema },
   FORBIDDEN: { status: 403, message: "The Agent is not allowed to perform this operation", data: ErrorDataSchema },
   NOT_FOUND: { status: 404, message: "The requested resource was not found", data: ErrorDataSchema },
+  CONTENT_UNAVAILABLE: { status: 409, message: "The referenced snapshot blob is not readable", data: ErrorDataSchema },
+  LOCATION_CONTRACT_VIOLATION: { status: 422, message: "A location does not satisfy its Document Contract location schema", data: ErrorDataSchema },
   UNAVAILABLE: { status: 503, message: "The Platform is temporarily unavailable", data: ErrorDataSchema },
+} as const;
+
+const agentProcedure = oc.errors({
+  INVALID_REQUEST: AgentApiErrorMap.INVALID_REQUEST,
+  UNAUTHORIZED: AgentApiErrorMap.UNAUTHORIZED,
+  FORBIDDEN: AgentApiErrorMap.FORBIDDEN,
+  NOT_FOUND: AgentApiErrorMap.NOT_FOUND,
+  UNAVAILABLE: AgentApiErrorMap.UNAVAILABLE,
 });
 
 const documentParams = z.object({
@@ -36,8 +53,8 @@ const submissionParams = z.object({
 
 export const createSubmissionContract = agentProcedure
   .errors({
-    CONTENT_UNAVAILABLE: { status: 409, message: "The referenced snapshot blob is not readable", data: ErrorDataSchema },
-    LOCATION_CONTRACT_VIOLATION: { status: 422, message: "A location does not satisfy its Document Contract location schema", data: ErrorDataSchema },
+    CONTENT_UNAVAILABLE: AgentApiErrorMap.CONTENT_UNAVAILABLE,
+    LOCATION_CONTRACT_VIOLATION: AgentApiErrorMap.LOCATION_CONTRACT_VIOLATION,
   })
   .route({
     method: "POST",

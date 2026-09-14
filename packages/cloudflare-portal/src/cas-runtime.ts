@@ -10,6 +10,18 @@
  * submissions endpoint) can hoist it instead of re-importing the key on every
  * call. Omitting it falls back to building a fresh one, which keeps a
  * single-tenant call site simple at the cost of that re-import.
+ *
+ * Hoisting the issuer only avoids re-importing the key - it does not avoid
+ * minting tokens. `createTenantCasClient` calls `getToken()` on every HTTP
+ * request it makes to CAS, and the `getToken` this module hands it
+ * (`createPlatformCasCapability`, cas-capability.ts) signs a fresh ES256 JWT
+ * on every call, with no caching: one snapshot read plus one retain produced
+ * five distinct tokens in the integration run. That per-request signing cost
+ * is a known, deliberate gap, not something this seam already solved. The
+ * knob a future caching layer would use is `PlatformCasCapabilityConfig.lifetimeSeconds`
+ * (cas-capability.ts) - accepted by `createPlatformCasCapability` but not
+ * currently passed by anything here, and untested. Do not add caching in this
+ * module; it belongs to a later slice with its own benchmark.
  */
 import { createCasBlobClient } from "@unicas/tenant-blob-client";
 import { createTenantCasClient } from "@unicas/tenant-client";

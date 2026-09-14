@@ -25,6 +25,13 @@ test("Worker fails closed before touching D1 when Google credentials are absent"
       MCP_SECURITY_MUTATIONS_ENABLED: "false",
       OAUTH_STATE_ENCRYPTION_KEY: "unused-disabled-fixture",
       get OAUTH_KV(): never { throw new Error("OAuth KV must not be touched"); },
+      get CAS_ORIGIN(): never { throw new Error("CAS must not be touched"); },
+      get CAS_STACK_ID(): never { throw new Error("CAS must not be touched"); },
+      get CAS_ISSUER(): never { throw new Error("CAS must not be touched"); },
+      get CAS_AUDIENCE(): never { throw new Error("CAS must not be touched"); },
+      get CAS_REF_DOMAIN(): never { throw new Error("CAS must not be touched"); },
+      get CAS_SIGNING_KID(): never { throw new Error("CAS must not be touched"); },
+      get CAS_SIGNING_KEY(): never { throw new Error("CAS must not be touched"); },
     };
     const response = await worker.fetch(new Request("https://unidocs.shazhou.work/admin/auth/login?code=never-log-this"), env);
     expect(response.status).toBe(503);
@@ -57,6 +64,13 @@ test.each(ADMIN_MCP_PATHS)("Worker MCP kill switch runs before Google credential
     get PORTAL_BOOTSTRAP_EMAIL(): never { throw new Error("Unexpected bootstrap"); },
     get MARKDOWN_OPERATOR_HMAC_KEY(): never { throw new Error("Unexpected Operator secret"); },
     get ADMIN_MARKDOWN_SERVICE(): never { throw new Error("Unexpected service binding"); },
+    get CAS_ORIGIN(): never { throw new Error("Unexpected CAS access"); },
+    get CAS_STACK_ID(): never { throw new Error("Unexpected CAS access"); },
+    get CAS_ISSUER(): never { throw new Error("Unexpected CAS access"); },
+    get CAS_AUDIENCE(): never { throw new Error("Unexpected CAS access"); },
+    get CAS_REF_DOMAIN(): never { throw new Error("Unexpected CAS access"); },
+    get CAS_SIGNING_KID(): never { throw new Error("Unexpected CAS access"); },
+    get CAS_SIGNING_KEY(): never { throw new Error("Unexpected CAS access"); },
   };
   const response = await worker.fetch(new Request("https://unidocs.shazhou.work" + path), env);
   expect(response.status).toBe(404);
