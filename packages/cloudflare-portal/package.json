@@ -26,8 +26,12 @@
     "@orpc/openapi": "1.15.0",
     "@orpc/server": "1.15.0",
     "@orpc/zod": "1.15.0",
+    "@unicas/tenant-blob-client": "workspace:*",
+    "@unicas/tenant-client": "workspace:*",
     "@unidocs/portal-service": "workspace:*",
     "@unidocs/protocol-admin-portal": "workspace:*",
+    "@unidocs/protocol-platform": "workspace:*",
+    "@unidocs/service-auth": "workspace:*",
     "agents": "0.21.0",
     "jose": "^6.2.10",
     "oauth4webapi": "^3.8.8"
