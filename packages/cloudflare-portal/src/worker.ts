@@ -27,7 +27,7 @@ import { createAdminMcpAuthorizationTransactions } from "./mcp/authorization-tra
 import { createAdminMcpAuthorization } from "./mcp/authorization.js";
 import { D1AdminMcpMembers } from "./mcp/members.js";
 import { handleAdminMcp } from "./mcp/worker.js";
-import type { AdminMcpScope } from "@unidocs/portal-service";
+import type { AdminContext, AdminMcpScope } from "@unidocs/portal-service";
 
 export default {
   async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
@@ -102,8 +102,25 @@ export default {
       const documentContractsHttp = createDocumentContractsHttp(new D1DocumentContractRepository(env.DB));
       const typeCardBundlesHttp = createTypeCardBundlesHttp(new D1TypeCardBundleRepository(env.DB), new R2BundleObjectStore(env.BUNDLES), env.BUNDLE_ORIGIN);
       const viewBundlesHttp = createViewBundlesHttp(new D1ViewBundleRepository(env.DB), new R2BundleObjectStore(env.BUNDLES), env.BUNDLE_ORIGIN);
-      const operatorTarget = createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY);
-      const operatorValidationsHttp = createOperatorValidationsHttp(new D1OperatorValidationRepository(env.DB), operatorTarget.transport, operatorTarget.keys);
+      // Deliberately NOT built up front like the handlers above: the Markdown
+      // Operator validation target needs ADMIN_MARKDOWN_SERVICE and
+      // MARKDOWN_OPERATOR_HMAC_KEY, and `pnpm dev portal` binds neither --
+      // there is no markdown worker running locally for a service binding to
+      // target. Building it unconditionally on every request 503'd the whole
+      // portal (tenant console and admin sign-in included) on an admin
+      // capability most requests never touch. Building it only inside the
+      // one route that needs it, and turning its "not configured" throw into
+      // a scoped response, keeps that capability optional without disabling
+      // the rest of the admin API.
+      const operatorValidations = async (apiRequest: Request, admin: AdminContext, requestId: string): Promise<Response> => {
+        let operatorTarget: ReturnType<typeof createMarkdownOperatorValidationTarget>;
+        try {
+          operatorTarget = createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY);
+        } catch {
+          return Response.json({ error: { code: "operator_not_configured", message: "Markdown Operator validation is not configured", requestId } }, { status: 503 });
+        }
+        return createOperatorValidationsHttp(new D1OperatorValidationRepository(env.DB), operatorTarget.transport, operatorTarget.keys)(apiRequest, admin, requestId);
+      };
       const operatorsHttp = createOperatorsHttp(new D1OperatorRepository(env.DB));
       const response = await createPortalBff(config, repository, {
         bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null,
@@ -115,7 +132,7 @@ export default {
           if (path.includes("/document-contracts")) return documentContractsHttp(apiRequest, admin, requestId);
           if (path.startsWith("/admin/api/v1/type-card-bundles")) return typeCardBundlesHttp(apiRequest, admin, requestId);
           if (path.startsWith("/admin/api/v1/view-bundles")) return viewBundlesHttp(apiRequest, admin, requestId);
-          if (path.startsWith("/admin/api/v1/operator-validations")) return operatorValidationsHttp(apiRequest, admin, requestId);
+          if (path.startsWith("/admin/api/v1/operator-validations")) return operatorValidations(apiRequest, admin, requestId);
           if (path.startsWith("/admin/api/v1/operators")) return operatorsHttp(apiRequest, admin, requestId);
           return documentTypesHttp(apiRequest, admin, requestId);
         },
