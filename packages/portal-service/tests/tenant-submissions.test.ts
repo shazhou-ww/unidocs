@@ -52,7 +52,7 @@ class InMemorySubmissionRepository implements TenantSubmissionRepository {
   contracts = new Map<string, SubmissionContract>([["markdown#1", { snapshotSchema, locationSchema }], ["markdown#0", { snapshotSchema, locationSchema }]]);
   receipts = new Map<string, { fingerprint: string; receipt: CommittedSubmissionReceipt }>();
   /** Runs inside commit before the lock re-check: a concurrent writer landing between read and commit. */
-  beforeCommit: (() => void)[] = [];
+  beforeCommit: (() => void | Promise<void>)[] = [];
   /** Forces a conflict outcome regardless of state, for the rare race where the reread shows every lock holding. */
   forcedConflicts = 0;
   readonly commands: SubmissionCommitCommand[] = [];
@@ -73,12 +73,14 @@ class InMemorySubmissionRepository implements TenantSubmissionRepository {
 
   commit = vi.fn(async (command: SubmissionCommitCommand): Promise<SubmissionCommitOutcome> => {
     this.commands.push(command);
-    this.beforeCommit.shift()?.();
+    await this.beforeCommit.shift()?.();
     const { request } = command;
     if (this.forcedConflicts > 0) {
       this.forcedConflicts -= 1;
       return { kind: "conflict" };
     }
+    // The submission id is unique per document: a second commit under it loses atomically.
+    if (this.receipts.has(`${command.documentId}/${request.submissionId}`)) return { kind: "conflict" };
     const snapshot = request.newSnapshotBlob !== undefined;
     if (snapshot && (request.observedCurrentVersionIdx !== this.currentVersionIdx || !this.availableDocumentContractIdxs.includes(request.newDocumentContractIdx!))) return { kind: "conflict" };
     if (request.threadUpdates.some(u => this.threads.get(u.threadId)?.acknowledgedCommentIdx !== u.observedAcknowledgedCommentIdx)) return { kind: "conflict" };
@@ -452,15 +454,42 @@ describe("step 11 — addressedComments", () => {
 });
 
 describe("step 12 — commit conflicts", () => {
-  test("a conflict at commit is explained by rereading the state, without a second attempt", async () => {
+  test("a conflict at commit is explained by rereading the state, without a second commit", async () => {
     repository.beforeCommit.push(() => { repository.currentVersionIdx = 4; });
     const receipt = await service().create(agent, "tenant-a", "doc-1", versionRequest());
     expect(receipt).toMatchObject({ state: "rejected", reason: "version_conflict", rejectedAt: NOW.toISOString(), conflict: { currentVersionIdx: 4 } });
     expect(repository.commit).toHaveBeenCalledTimes(1);
     expect(repository.loadState).toHaveBeenCalledTimes(2);
-    expect(repository.findReceipt).toHaveBeenCalledTimes(1);
+    expect(repository.findReceipt).toHaveBeenCalledTimes(2);
     expect(verifySnapshot).toHaveBeenCalledTimes(1);
     expect(repository.receipts.size).toBe(0);
+  });
+
+  test("an identical submission that commits first is replayed to the racing call, not reported as a conflict", async () => {
+    let winner: unknown;
+    // The racing twin runs through the same repository between this call's read and its commit.
+    repository.beforeCommit.push(async () => { winner = await service().create(agent, "tenant-a", "doc-1", versionRequest()); });
+    const receipt = await service().create(agent, "tenant-a", "doc-1", versionRequest());
+    expect(winner).toMatchObject({ state: "committed" });
+    expect(repository.currentVersionIdx).toBe(4);
+    expect(receipt).toEqual(winner);
+    expect(receipt).toEqual(repository.receipts.get("doc-1/sub-1")!.receipt);
+    expect(repository.commit).toHaveBeenCalledTimes(2);
+  });
+
+  test("a different body that commits first under the same id makes the racing call invalid_request", async () => {
+    const other = versionRequest({ threadUpdates: [update({ content: { ...replyContent, text: "Other body" }, resultLocations: [resultLocation] })] });
+    repository.beforeCommit.push(async () => { await service().create(agent, "tenant-a", "doc-1", other); });
+    await expect(service().create(agent, "tenant-a", "doc-1", versionRequest())).rejects.toMatchObject({ code: "invalid_request" });
+    expect(repository.receipts.get("doc-1/sub-1")!.receipt.replies[0]!.content.text).toBe("Other body");
+  });
+
+  test("a second commit conflict that the reread explains is rejected, not unavailable", async () => {
+    repository.forcedConflicts = 1;
+    repository.beforeCommit.push(() => {}, () => { repository.currentVersionIdx = 4; });
+    const receipt = await service().create(agent, "tenant-a", "doc-1", versionRequest());
+    expect(receipt).toMatchObject({ state: "rejected", reason: "version_conflict", conflict: { currentVersionIdx: 4 } });
+    expect(repository.commit).toHaveBeenCalledTimes(2);
   });
 
   test("a conflict whose reread shows a moved watermark is reply_watermark_conflict", async () => {

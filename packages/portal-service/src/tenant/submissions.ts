@@ -131,18 +131,24 @@ export function createTenantSubmissionService(repository: TenantSubmissionReposi
     };
   }
 
-  /** Steps 5–12 of one decision. `retry` means the commit conflicted with every lock still holding on reread. */
-  async function decide(context: TenantContext, documentId: string, request: AgentSubmissionRequest, fingerprint: string): Promise<SubmissionReceipt | { readonly retry: true }> {
+  /**
+   * Steps 5–7: the part of a decision that must also explain a commit conflict.
+   * A conflict may be an identical submission that committed first (replay it),
+   * a different body under the same id (invalid_request, R2), or a moved lock.
+   */
+  async function replayOrReject(context: TenantContext, documentId: string, request: AgentSubmissionRequest, fingerprint: string): Promise<SubmissionReceipt | { readonly locksHold: SubmissionState }> {
     const stored = await repository.findReceipt(context, documentId, request.submissionId);
     if (stored) {
       if (stored.fingerprint !== fingerprint) throw new TenantOperationError("invalid_request");
       return stored.receipt;
     }
-
     const state = await requireState(context, documentId, request);
     const reason = lockFailure(request, state);
-    if (reason) return rejected(request, state, reason);
+    return reason ? rejected(request, state, reason) : { locksHold: state };
+  }
 
+  /** Steps 8–12 against a state whose locks hold. `null` means the commit conflicted. */
+  async function attemptCommit(context: TenantContext, documentId: string, request: AgentSubmissionRequest, fingerprint: string, state: SubmissionState): Promise<CommittedSubmissionReceipt | null> {
     for (const update of request.threadUpdates) {
       const thread = state.threads.get(update.threadId)!;
       const after = update.observedAcknowledgedCommentIdx ?? -1;
@@ -166,12 +172,7 @@ export function createTenantSubmissionService(repository: TenantSubmissionReposi
     const outcome = await repository.commit({
       context, documentId, fingerprint, request, observed: state, addressedComments: addressedCommentsOf(request, state), now: clock(),
     });
-    if (outcome.kind === "committed") return outcome.receipt;
-
-    const reread = await requireState(context, documentId, request);
-    const rereadReason = lockFailure(request, reread);
-    if (rereadReason) return rejected(request, reread, rereadReason);
-    return { retry: true };
+    return outcome.kind === "committed" ? outcome.receipt : null;
   }
 
   return {
@@ -194,12 +195,15 @@ export function createTenantSubmissionService(repository: TenantSubmissionReposi
 
       const fingerprint = await guardCanonicalization(() => schemaHash({ operation: "createSubmission", documentId: document, body: request }));
 
-      // One retry absorbs a commit conflict whose reread shows every lock holding (a race the reread cannot explain).
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const decision = await decide(context, document, request, fingerprint);
-        if (!("retry" in decision)) return decision;
+      // Every commit conflict re-enters at step 5. At most two commits are attempted; a
+      // second conflict that steps 5–7 still cannot explain is unavailable.
+      for (let commits = 0; ; commits += 1) {
+        const decision = await replayOrReject(context, document, request, fingerprint);
+        if (!("locksHold" in decision)) return decision;
+        if (commits === 2) throw new TenantOperationError("unavailable");
+        const committed = await attemptCommit(context, document, request, fingerprint, decision.locksHold);
+        if (committed) return committed;
       }
-      throw new TenantOperationError("unavailable");
     },
 
     async get(context: TenantContext, tenantId: string, documentId: string, submissionId: string): Promise<CommittedSubmissionReceipt> {
