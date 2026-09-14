@@ -108,10 +108,61 @@ describe("memory transport 写操作", () => {
   });
 
   it("createDocument 建出没有版本的文档，currentVersionIdx 为 null", async () => {
-    const record = await client.createDocument({ documentType: "markdown", name: "新作品" });
+    const record = await client.createDocument("key-doc-1", { documentType: "markdown", name: "新作品" });
 
     expect(record.currentVersionIdx).toBeNull();
     expect(record.name).toBe("新作品");
+  });
+
+  // Finding 2（终审）：契约要求 createDocument 带 idempotency-key，内存 transport 之前
+  // 对缺 key 的请求视而不见——client 换了签名后这里补上 client 侧的转发断言。
+  it("createDocument 把 idempotencyKey 转发成 idempotency-key 请求头", async () => {
+    const first = await client.createDocument("key-doc-dup", { documentType: "markdown", name: "重放" });
+    const second = await client.createDocument("key-doc-dup", { documentType: "markdown", name: "重放" });
+
+    expect(second.documentId).toBe(first.documentId);
+  });
+
+  // Finding 2（终审）：真实服务端的 IdempotentMutationHeadersSchema 会在 oRPC 校验阶段
+  // 就拒绝没带 idempotency-key 的请求；内存 transport 以前对缺 key 视而不见，是假后端
+  // 掩盖真缺陷的又一处（同 global-constraints 提到的 D1 替身教训同构）。这里绕开 client
+  // （它现在在类型层面就不让你不传 key），直接给 transport 一个没有 idempotencyKey 的
+  // PlatformRequest，断言按真实服务端同样的形状拒绝：400 invalid_request。
+  it("createDocument 的 POST 请求缺 idempotency-key 时被拒绝，形状与真实服务端一致", async () => {
+    const transport = createMemoryTransport({ store });
+    const result = await transport({
+      method: "POST",
+      path: "/api/v1/tenants/t1/documents",
+      body: { documentType: "markdown", name: "无 key" },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.error.code).toBe("invalid_request");
+  });
+
+  it("createThread 的 POST 请求缺 idempotency-key 时同样被拒绝", async () => {
+    const transport = createMemoryTransport({ store });
+    const result = await transport({
+      method: "POST",
+      path: "/api/v1/tenants/t1/documents/doc-1/threads",
+      body: { baseVersionIdx: 1, content: text("一"), location: null },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.error.code).toBe("invalid_request");
+  });
+
+  it("appendComment 的 POST 请求缺 idempotency-key 时同样被拒绝", async () => {
+    const thread = await client.createThread("doc-1", "key-1", { baseVersionIdx: 1, content: text("一"), location: null });
+    const transport = createMemoryTransport({ store });
+    const result = await transport({
+      method: "POST",
+      path: `/api/v1/tenants/t1/documents/doc-1/threads/${thread.threadId}/comments`,
+      body: { baseVersionIdx: 1, content: text("二"), location: null },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.error.code).toBe("invalid_request");
   });
 
   it("createThread 生成的 id 与 seed 中已有的 thread id 撞车时不覆盖它", () => {

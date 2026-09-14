@@ -55,11 +55,24 @@ export function createTenantSessionHttp(options: {
         // no Authorization header (Bearer never falls back to a cookie, so it
         // must stay 401, not be upgraded to a fresh session), the request URL
         // origin matches the configured origin (no DNS rebinding), and the
-        // request is not marked cross-site. Task 3's authenticateTenant checks
-        // Authorization before the origin/cross-site check, so without these
-        // extra checks here an Authorization header on an otherwise-forbidden
-        // request would surface as "unauthorized" and get issued a session -
-        // turning the local-dev convenience into a CSRF/rebinding amplifier.
+        // request is not marked cross-site.
+        //
+        // Of these three, the Authorization check is the load-bearing one.
+        // authenticateTenant (session.ts) throws "unauthorized" from two
+        // different places: immediately when an Authorization header is
+        // present (Bearer must never fall back to the cookie), or later, once
+        // the origin/cross-site check has already passed, when the session
+        // cookie is missing/invalid. So "unauthorized" alone does not tell
+        // you which case you're in - without the Authorization check here, a
+        // rejected Bearer request would look identical to a plain missing
+        // session and get upgraded to a fresh one, turning the local-dev
+        // convenience into a CSRF/rebinding amplifier. The origin-match and
+        // not-cross-site checks below are defence in depth: once Authorization
+        // is confirmed absent, authenticateTenant has already enforced both
+        // before it could reach the "unauthorized" throw, so they cannot
+        // themselves be false here - they guard against this handler's
+        // precondition ever drifting out of sync with session.ts's, not
+        // against a request that reaches this line with either one violated.
         if (
           error.code === "unauthorized"
           && isLocalDevOrigin(origin)
