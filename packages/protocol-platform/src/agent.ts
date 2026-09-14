@@ -9,8 +9,8 @@
  *
  * Agents use the read and CAS endpoints from `PlatformEndpointContracts`.
  */
-import type { SValue } from "@unidocs/protocol";
 import type {
+  CasBlobRef,
   DocumentContractIdx,
   DocumentLocation,
   DocumentId,
@@ -38,16 +38,22 @@ export interface AgentThreadUpdate {
   readonly observedAcknowledgedCommentIdx: CommentIdx | null;
   readonly respondThroughCommentIdx: CommentIdx;
   readonly content: MessageContent;
-  /** Relative to newSnapshot; must be empty when newSnapshot is omitted. */
+  /** Relative to newSnapshotBlob; must be empty when newSnapshotBlob is omitted. */
   readonly resultLocations: readonly DocumentLocation[];
 }
 
 export interface AgentSubmissionRequest {
   readonly submissionId: SubmissionId;
   readonly observedCurrentVersionIdx?: VersionIdx | null;
-  /** Required with newSnapshot and must name an available paired contract revision. */
+  /** Required with newSnapshotBlob and must name an available paired contract revision. */
   readonly newDocumentContractIdx?: DocumentContractIdx;
-  readonly newSnapshot?: SValue;
+  /**
+   * Snapshot written directly to UniCAS by the Agent before submitting. The
+   * Platform does not proxy CAS node traffic; it reads this blob back to
+   * validate it against the paired Document Contract revision, then retains
+   * the blob root after the transaction commits.
+   */
+  readonly newSnapshotBlob?: CasBlobRef;
   readonly threadUpdates: readonly AgentThreadUpdate[];
 }
 
