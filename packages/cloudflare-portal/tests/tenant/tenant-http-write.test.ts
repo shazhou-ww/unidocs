@@ -6,6 +6,7 @@ import { D1TenantVersionRepository } from "../../src/tenant/version-repository.j
 import { D1TenantThreadRepository } from "../../src/tenant/thread-repository.js";
 import { createLocationValidator } from "../../src/tenant/location-validator.js";
 import { createTenantHttp } from "../../src/tenant/tenant-http.js";
+import type { CommittedTenantWrite } from "../../src/tenant/operator-dispatch.js";
 import type { SnapshotStore } from "../../src/snapshot-store.js";
 import { startRealD1, type RealD1 } from "./real-d1.js";
 
@@ -18,6 +19,7 @@ const agent: TenantContext = {
 
 let real: RealD1;
 let handle: ReturnType<typeof createTenantHttp>;
+let committed: ReturnType<typeof vi.fn<(write: CommittedTenantWrite) => void>>;
 
 const snapshots: SnapshotStore = {
   read: async () => new ReadableStream({ start(controller) { controller.close(); } }),
@@ -33,6 +35,7 @@ beforeEach(async () => {
     versions: new D1TenantVersionRepository(real.db, snapshots),
     threads: new D1TenantThreadRepository(real.db),
     validateLocation: createLocationValidator(),
+    onCommitted: committed = vi.fn(),
   });
 });
 
@@ -132,6 +135,8 @@ describe("tenant HTTP writes refuse an Agent bearer", () => {
     }, { "idempotency-key": "c1" }, agent);
     expect(appended.status).toBe(403);
     expect(await count("portal_comments")).toBe(1);
+    // Only the session's thread creation above committed.
+    expect(committed).toHaveBeenCalledTimes(1);
   });
 
   it("refuses issuing a CAS capability with 403, not 503", async () => {
@@ -254,5 +259,73 @@ describe("tenant HTTP writes", () => {
       baseVersionIdx: 9, content: { text: "x", richContent: null, attachments: [] }, location: null,
     }, { "idempotency-key": "t1" });
     expect(response.status).toBe(404);
+  });
+});
+
+// The Operator is told about a write only once the service has committed it.
+describe("tenant HTTP writes notify onCommitted", () => {
+  it("reports a created document exactly once, and again on an idempotent replay", async () => {
+    await enableDocumentType("markdown");
+    const response = await post("/api/v1/tenants/t-local/documents", { documentType: "markdown", name: "Notes" }, { "idempotency-key": "k1" });
+    expect(response.status).toBe(201);
+    const { documentId } = await response.json() as { documentId: string };
+    expect(committed.mock.calls).toEqual([[{ kind: "document.created", tenantId: "t-local", documentId }]]);
+
+    await post("/api/v1/tenants/t-local/documents", { documentType: "markdown", name: "Notes" }, { "idempotency-key": "k1" });
+    expect(committed).toHaveBeenCalledTimes(2);
+    expect(committed.mock.calls[1]).toEqual([{ kind: "document.created", tenantId: "t-local", documentId }]);
+  });
+
+  it("does not report a document the service refused", async () => {
+    const response = await post("/api/v1/tenants/t-local/documents", { documentType: "markdown", name: "Notes" }, { "idempotency-key": "k1" });
+    expect(response.status).toBe(409);
+    expect(committed).not.toHaveBeenCalled();
+  });
+
+  it("does not report a write refused to an Agent bearer", async () => {
+    await enableDocumentType("markdown");
+    const response = await post("/api/v1/tenants/t-local/documents", { documentType: "markdown", name: "Notes" }, { "idempotency-key": "k1" }, agent);
+    expect(response.status).toBe(403);
+    expect(committed).not.toHaveBeenCalled();
+  });
+
+  it("reports a new thread as comment 0 and an appended comment with its commentIdx", async () => {
+    await seedDocumentWithVersion("doc-1");
+    const created = await post("/api/v1/tenants/t-local/documents/doc-1/threads", {
+      baseVersionIdx: 0, content: { text: "first", richContent: null, attachments: [] }, location: null,
+    }, { "idempotency-key": "t1" });
+    const { threadId } = await created.json() as { threadId: string };
+    expect(committed.mock.calls).toEqual([[{ kind: "comment.appended", tenantId: "t-local", documentId: "doc-1", threadId, commentIdx: 0 }]]);
+
+    const appended = await post(`/api/v1/tenants/t-local/documents/doc-1/threads/${threadId}/comments`, {
+      baseVersionIdx: 0, content: { text: "second", richContent: null, attachments: [] }, location: null,
+    }, { "idempotency-key": "c1" });
+    expect(appended.status).toBe(201);
+    expect(committed).toHaveBeenCalledTimes(2);
+    expect(committed.mock.calls[1]).toEqual([{ kind: "comment.appended", tenantId: "t-local", documentId: "doc-1", threadId, commentIdx: 1 }]);
+  });
+
+  it("does not report a thread on a version that does not exist", async () => {
+    await seedDocumentWithVersion("doc-1");
+    const response = await post("/api/v1/tenants/t-local/documents/doc-1/threads", {
+      baseVersionIdx: 9, content: { text: "x", richContent: null, attachments: [] }, location: null,
+    }, { "idempotency-key": "t1" });
+    expect(response.status).toBe(404);
+    expect(committed).not.toHaveBeenCalled();
+  });
+
+  it("reports a moved current version, and not a conflicting move", async () => {
+    await seedDocumentWithVersion("doc-1");
+    const conflict = await post("/api/v1/tenants/t-local/documents/doc-1/current-version", {
+      observedCurrentVersionIdx: 7, targetVersionIdx: 0, reason: "stale",
+    });
+    expect(conflict.status).toBe(409);
+    expect(committed).not.toHaveBeenCalled();
+
+    const moved = await post("/api/v1/tenants/t-local/documents/doc-1/current-version", {
+      observedCurrentVersionIdx: 0, targetVersionIdx: 0, reason: "restore",
+    });
+    expect(moved.status).toBe(200);
+    expect(committed.mock.calls).toEqual([[{ kind: "current_version.moved", tenantId: "t-local", documentId: "doc-1" }]]);
   });
 });

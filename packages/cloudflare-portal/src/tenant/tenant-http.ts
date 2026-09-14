@@ -10,6 +10,7 @@ import {
 } from "@unidocs/portal-service";
 import { readBoundedJsonRequest } from "../bounded-json-request.js";
 import { VersionConflictError } from "./document-repository.js";
+import type { CommittedTenantWrite } from "./operator-dispatch.js";
 
 export interface TenantHttpDependencies {
   readonly catalog: TenantCatalogRepository;
@@ -17,6 +18,13 @@ export interface TenantHttpDependencies {
   readonly versions: TenantVersionRepository;
   readonly threads: TenantThreadRepository;
   readonly validateLocation: DocumentLocationValidator;
+  /**
+   * Told about each write once the service has returned it, never before and
+   * never for a refused one. An idempotent replay is reported again: webhook
+   * delivery is at-least-once, so the Operator already tolerates duplicates,
+   * and a replay may be the retry of a request whose first notification was lost.
+   */
+  readonly onCommitted?: (write: CommittedTenantWrite) => void;
 }
 
 /**
@@ -65,6 +73,7 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
   const documents = createTenantDocumentService(dependencies.documents);
   const versions = createTenantVersionService(dependencies.versions);
   const threads = createTenantThreadService(dependencies.threads, { validateLocation: dependencies.validateLocation });
+  const committed = (write: CommittedTenantWrite) => dependencies.onCommitted?.(write);
 
   const router = implementation.router({
     documentTypes: {
@@ -76,15 +85,21 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
     documents: {
       list: implementation.documents.list.handler(({ input, context }) =>
         documents.list(context.tenant, input.params.tenantId, input.query ?? {})),
-      create: implementation.documents.create.handler(({ input, context }) => {
+      create: implementation.documents.create.handler(async ({ input, context }) => {
         forbidBearerWrite(context.tenant);
-        return documents.create(context.tenant, input.params.tenantId, input.body, input.headers["idempotency-key"], context.requestId);
+        const { tenantId } = input.params;
+        const record = await documents.create(context.tenant, tenantId, input.body, input.headers["idempotency-key"], context.requestId);
+        committed({ kind: "document.created", tenantId, documentId: record.documentId });
+        return record;
       }),
       get: implementation.documents.get.handler(({ input, context }) =>
         documents.get(context.tenant, input.params.tenantId, input.params.documentId)),
-      moveCurrentVersion: implementation.documents.moveCurrentVersion.handler(({ input, context }) => {
+      moveCurrentVersion: implementation.documents.moveCurrentVersion.handler(async ({ input, context }) => {
         forbidBearerWrite(context.tenant);
-        return documents.moveCurrentVersion(context.tenant, input.params.tenantId, input.params.documentId, input.body, context.requestId);
+        const { tenantId, documentId } = input.params;
+        const record = await documents.moveCurrentVersion(context.tenant, tenantId, documentId, input.body, context.requestId);
+        committed({ kind: "current_version.moved", tenantId, documentId });
+        return record;
       }),
       listAudit: implementation.documents.listAudit.handler(({ input, context }) =>
         documents.listAuditEvents(context.tenant, input.params.tenantId, input.params.documentId, input.query ?? {})),
@@ -103,15 +118,22 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
     threads: {
       list: implementation.threads.list.handler(({ input, context }) =>
         threads.list(context.tenant, input.params.tenantId, input.params.documentId, input.query ?? {})),
-      create: implementation.threads.create.handler(({ input, context }) => {
+      create: implementation.threads.create.handler(async ({ input, context }) => {
         forbidBearerWrite(context.tenant);
-        return threads.create(context.tenant, input.params.tenantId, input.params.documentId, input.body, input.headers["idempotency-key"]);
+        const { tenantId, documentId } = input.params;
+        const thread = await threads.create(context.tenant, tenantId, documentId, input.body, input.headers["idempotency-key"]);
+        // A new thread is its first comment, so the Operator hears comment 0 appended.
+        committed({ kind: "comment.appended", tenantId, documentId, threadId: thread.threadId, commentIdx: thread.comments[0].commentIdx });
+        return thread;
       }),
       get: implementation.threads.get.handler(({ input, context }) =>
         threads.get(context.tenant, input.params.tenantId, input.params.documentId, input.params.threadId)),
-      appendComment: implementation.threads.appendComment.handler(({ input, context }) => {
+      appendComment: implementation.threads.appendComment.handler(async ({ input, context }) => {
         forbidBearerWrite(context.tenant);
-        return threads.appendComment(context.tenant, input.params.tenantId, input.params.documentId, input.params.threadId, input.body, input.headers["idempotency-key"]);
+        const { tenantId, documentId, threadId } = input.params;
+        const comment = await threads.appendComment(context.tenant, tenantId, documentId, threadId, input.body, input.headers["idempotency-key"]);
+        committed({ kind: "comment.appended", tenantId, documentId, threadId, commentIdx: comment.commentIdx });
+        return comment;
       }),
     },
     cas: {

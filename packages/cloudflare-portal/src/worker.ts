@@ -36,6 +36,7 @@ import { createLocationValidator } from "./tenant/location-validator.js";
 import { authenticateTenant, D1TenantSessionStore } from "./tenant/session.js";
 import { createTenantSessionHttp } from "./tenant/session-http.js";
 import { createTenantHttp } from "./tenant/tenant-http.js";
+import { createOperatorDispatcher } from "./tenant/operator-dispatch.js";
 import { createAgentHttp, isSubmissionPath } from "./tenant/agent-http.js";
 import { CasUnavailableError } from "./tenant/cas-unavailable.js";
 import { D1TenantSubmissionRepository } from "./tenant/submission-repository.js";
@@ -80,7 +81,7 @@ const TENANT_HEADERS = {
  * leaks its message (repository errors can carry SQL) nor falls through to
  * the worker's Administrator-shaped 503.
  */
-async function serveTenant(request: Request, env: Env, path: string): Promise<Response> {
+async function serveTenant(request: Request, env: Env, path: string, context?: ExecutionContext): Promise<Response> {
   const requestId = crypto.randomUUID();
   const now = () => Math.floor(Date.now() / 1000);
   let response: Response;
@@ -95,6 +96,14 @@ async function serveTenant(request: Request, env: Env, path: string): Promise<Re
     } else {
       try {
         const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store, ...agent });
+        // Built lazily, like CAS: `pnpm dev portal` binds neither the Markdown
+        // Operator service nor its key, so the target is only constructed when a
+        // committed write's type has a builtin Operator, and a construction
+        // failure is logged by the dispatcher instead of failing the write.
+        const dispatchToOperator = createOperatorDispatcher({
+          database: env.DB,
+          target: () => createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY),
+        });
         const snapshots = lazySnapshotStore(async () => {
           try {
             return await createPortalCasRuntime(env, tenant.tenantId);
@@ -114,6 +123,14 @@ async function serveTenant(request: Request, env: Env, path: string): Promise<Re
             versions: new D1TenantVersionRepository(env.DB, snapshots),
             threads: new D1TenantThreadRepository(env.DB),
             validateLocation: createLocationValidator(),
+            onCommitted: write => {
+              // The response does not wait for the Operator. With no execution
+              // context (tests) the dispatch still starts, it is just not held
+              // open; it never rejects, so nothing is left unhandled.
+              const pending = dispatchToOperator(write);
+              if (context) context.waitUntil(pending);
+              else void pending;
+            },
           })(request, tenant, requestId);
       } catch (error) {
         if (!(error instanceof TenantAccessError)) throw error;
@@ -206,7 +223,7 @@ export default {
       // Ahead of the Google settings for the same reason as the tenant UI:
       // nothing in the tenant data plane needs Google, and a missing client
       // must not take it down.
-      if (isTenantPath(requestPath)) return await serveTenant(request, env, requestPath);
+      if (isTenantPath(requestPath)) return await serveTenant(request, env, requestPath, context);
       const config = portalGoogleConfigFromGateway({
         GATEWAY_OIDC_CLIENT_ID: env.GATEWAY_OIDC_CLIENT_ID,
         GATEWAY_OIDC_CLIENT_SECRET: env.GATEWAY_OIDC_CLIENT_SECRET,

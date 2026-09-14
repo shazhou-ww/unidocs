@@ -306,6 +306,37 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
     }
   });
 
+  // The webhook to the Operator is optional: with MARKDOWN_OPERATOR_HMAC_KEY
+  // (and the service binding) absent, the write still commits and answers 201;
+  // the dispatch, handed to waitUntil, only logs its failure.
+  it("creates a document with 201 when the Operator webhook cannot be configured", async () => {
+    const db = real.db;
+    await db.prepare(
+      "INSERT INTO portal_document_types (document_type, internal_name, enabled, registration_json, created_at) VALUES ('markdown', 'markdown', 1, ?, '2026-09-14T00:00:00.000Z')",
+    ).bind(JSON.stringify({ documentType: "markdown", builtinOperator: { operatorId: "op-1", baseUrl: "https://unidocs-markdown.shazhou.workers.dev" } })).run();
+    const env = tenantEnv(db);
+    const pending: Promise<unknown>[] = [];
+    const context = { waitUntil: (promise: Promise<unknown>) => { pending.push(promise); }, passThroughOnException() {} } as unknown as ExecutionContext;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => { });
+    try {
+      const session = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`), env, context);
+      const cookies = session.headers.getSetCookie().map(value => value.split(";")[0]);
+      const csrf = cookies.find(value => value.startsWith("__Host-unidocs_tenant_csrf="))!.split("=")[1];
+      const create = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, {
+        method: "POST",
+        headers: { cookie: cookies.join("; "), origin: ORIGIN, "x-csrf-token": csrf, "content-type": "application/json", "idempotency-key": "k1" },
+        body: JSON.stringify({ documentType: "markdown", name: "Notes" }),
+      }), env, context);
+      expect(create.status).toBe(201);
+      expect(pending).toHaveLength(1);
+      await expect(Promise.all(pending)).resolves.toEqual([undefined]);
+      const events = logged.mock.calls.map(([line]) => JSON.parse(String(line)) as { event: string });
+      expect(events.map(line => line.event)).toEqual(["portal_operator_webhook_failed"]);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it("forbids a tenant session on the submissions route", async () => {
     const env = tenantEnv(real.db);
     const session = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`), env);
