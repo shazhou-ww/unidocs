@@ -41,4 +41,13 @@ describe("tenant migration", () => {
     const jsonColumns = sql.match(/^\s*\w+_json TEXT NOT NULL(?! CHECK \(json_valid)/gm);
     expect(jsonColumns).toBeNull();
   });
+
+  it("B2: indexes portal_comments on (tenant_id, document_id, base_version_idx) for thread-repository.ts's open filter", async () => {
+    // thread-repository.ts's list() anchors open threads with a correlated
+    // EXISTS on base_version_idx, which has no index of its own before this:
+    // comment_idx is the trailing PK column (a seek), but base_version_idx
+    // is not, so that EXISTS scanned every comment row for the document.
+    const sql = await readFile(migration, "utf8");
+    expect(sql).toContain("CREATE INDEX portal_comment_version ON portal_comments(tenant_id, document_id, base_version_idx);");
+  });
 });

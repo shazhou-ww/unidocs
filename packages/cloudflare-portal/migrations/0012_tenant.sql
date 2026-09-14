@@ -51,6 +51,8 @@ CREATE TABLE portal_comments (
   FOREIGN KEY (tenant_id, document_id, thread_id) REFERENCES portal_threads(tenant_id, document_id, thread_id)
 );
 
+CREATE INDEX portal_comment_version ON portal_comments(tenant_id, document_id, base_version_idx);
+
 CREATE TABLE portal_replies (
   tenant_id TEXT NOT NULL,
   document_id TEXT NOT NULL,

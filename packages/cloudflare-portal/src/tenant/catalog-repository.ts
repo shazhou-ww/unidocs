@@ -91,7 +91,16 @@ export class D1TenantCatalogRepository implements TenantCatalogRepository {
 function projectPublicDocumentType(row: DocumentTypeRow): PublicDocumentType | null {
   try {
     return buildPublicDocumentType(row);
-  } catch {
+  } catch (error) {
+    // No repository under packages/cloudflare-portal/src logs anything today,
+    // and worker.ts's portal_operation_failed log only fires on an uncaught
+    // throw reaching the HTTP layer - which this catch specifically prevents.
+    // Without a line here, a corrupt admin row vanishes from the catalog with
+    // zero trace: an administrator sees a published type that no tenant can
+    // see, and nothing records why. Structured the same way worker.ts already
+    // logs (JSON with an `event` field), so it can be grepped the same way.
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(JSON.stringify({ event: "tenant_catalog_row_skipped", documentType: row.document_type, message }));
     return null;
   }
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DocumentContractRecordSchema, PublicDocumentTypeSchema } from "@unidocs/protocol-tenant-portal";
 import { D1TenantCatalogRepository } from "../../src/tenant/catalog-repository.js";
 import { encodeCursor } from "../../src/tenant/cursor.js";
@@ -94,6 +94,26 @@ describe("D1TenantCatalogRepository.listDocumentTypes", () => {
     const repository = new D1TenantCatalogRepository(databaseDouble(rows));
     const page = await repository.listDocumentTypes(context, {});
     expect(page.items.map(item => item.documentType)).toEqual(["markdown"]);
+  });
+
+  it("B1: logs a structured warning naming the skipped document type when a row is dropped", async () => {
+    // Before B1, this skip was completely silent: no repository under
+    // packages/cloudflare-portal/src logs anything, so a corrupt admin row
+    // vanished from the catalog with zero trace.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const broken = registration({ documentType: "broken", viewBundle: { viewBundleId: "vb-broken", manifest: {} } });
+      const repository = new D1TenantCatalogRepository(
+        databaseDouble([{ document_type: "broken", registration_json: JSON.stringify(broken) }]),
+      );
+      await repository.listDocumentTypes(context, {});
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const logged = JSON.parse(warnSpy.mock.calls[0]?.[0] as string);
+      expect(logged).toMatchObject({ event: "tenant_catalog_row_skipped", documentType: "broken" });
+      expect(typeof logged.message).toBe("string");
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("resolves type card asset paths against the bundle url", async () => {

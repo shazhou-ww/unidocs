@@ -342,6 +342,15 @@ export class D1TenantThreadRepository implements TenantThreadRepository {
    * as the middle argument of `?4 IS NULL OR ?4 = (...)`, keeping the same
    * "optional filter" shape as every other predicate in this query.
    *
+   * The `versionIdx` anchoring EXISTS above filters `portal_comments` on
+   * `base_version_idx`, which had no index of its own: `comment_idx` is the
+   * trailing PK column, so `MAX(comment_idx)` is a seek, but that EXISTS
+   * scanned every comment row for the document. `migrations/0012_tenant.sql`
+   * adds `portal_comment_version (tenant_id, document_id, base_version_idx)`
+   * for this. It lands now rather than as a later migration purely because of
+   * timing: 0012 has never reached production, so widening it is still a
+   * one-line edit rather than a new migration after Plan 3 ships.
+   *
    * The keyset predicate uses `created_at < ?5 OR (created_at = ?5 AND
    * thread_id < ?6)` rather than the row-value form `(created_at, thread_id)
    * < (?5, ?6)`: D1's SQLite does support row-value comparison (verified
