@@ -89,10 +89,11 @@ gateway 实际使用的路径是 `/admin/api/v1`、`/ui/*`、`/tenants/*`，与�
 - `BoundTenantMember`：`{ memberId, tenantId, principalId, email, issuer, subject }`
 - `requireBoundTenantMember(identity, member)`：不在名单或未激活抛
   `TenantAccessError("forbidden")`；identity 与已绑定的 issuer/subject 不符
-  同样 forbidden；首次登录（member 未绑定）允许并返回待绑定标记。
-- 复用已有的 `requireRecentAuthentication`、`googleIdentityFromConfirmedLogin`、
-  `googleIdentityFromVerifiedClaims`、`normalizeAdministratorEmail`
-  （邮箱规范化抽成共用函数，避免两套规则漂移）。
+  同样 forbidden；首次登录（member 未绑定）只比对邮箱并放行，绑定由仓储完成。
+- 身份类型直接沿用 `AdminIdentity`（起别名 `GoogleLoginIdentity`），
+  claim 校验与邮箱规范化整段复用 `googleIdentityFromConfirmedLogin` /
+  `validateAdminIdentity` / `requireRecentAuthentication`。不另写一套——
+  两套 Google claim 规则迟早会漂移。
 
 `TenantContext` 已在 `src/tenant/access.ts` 定义，不新增类型。
 从 `index.ts` 导出新符号。
@@ -122,7 +123,17 @@ gateway 实际使用的路径是 `/admin/api/v1`、`/ui/*`、`/tenants/*`，与�
   - `GET /api/v1/tenants/{tenantId}/document-types`
   - `GET /api/v1/tenants/{tenantId}/document-types/{documentType}/document-contracts/{documentContractIdx}`
   - `D1TenantCatalogRepository` 读**现有**的 `portal_document_types` /
-    `portal_document_contracts`，零新表。只返回 `enabled` 的类型。
+    `portal_document_contracts` / `portal_type_card_bundles` /
+    `portal_view_bundles`，零新表。只返回 `enabled` 的类型。
+  - 投影没有想象中便宜：契约的 `PublicDocumentType` 要求
+    `typeCardBundleId`、`typeCard`（locale 保留、资源路径解析成 bundle
+    origin 绝对 URL）、`viewBundleId` 和至少一个
+    `availableDocumentContractIdxs`。而存储里**没有「选中」这个概念**——
+    两张 bundle 表都只是候选列表（schema 里字段就叫 candidate name）。
+    本轮采用临时规则「该类型最新上传的 bundle = 当前选中」，
+    `availableDocumentContractIdxs` 取 View manifest 支持的版本与实际存在
+    版本的交集（Operator 那一侧还没有数据源）。投影不出来的类型直接不进
+    目录，而不是发一条残缺记录。admin 侧有了选择能力后替换这条规则。
   - 经 `createTenantCatalogService`，`requireTenantScope` 负责越权拦截。
 
 `worker.ts`：在现有 `serveTenantWebUi` 调用处换成一个 tenant 面分发器，顺序为
