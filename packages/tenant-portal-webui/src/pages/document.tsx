@@ -9,8 +9,9 @@ import { useDrafts } from "../drafts/use-drafts.js";
 import { errorText } from "../error-text.js";
 import { decideRightPane, type RightPaneDecision } from "../model/compare.js";
 import { createThreadFromView } from "../model/create-thread-from-view.js";
-import { sendDraft } from "../model/send-comment.js";
+import { sendDraft, sentCommentOf } from "../model/send-comment.js";
 import { useDocumentSession } from "../model/use-document.js";
+import { useOperatorFollow } from "../model/use-operator-follow.js";
 import { ThreadPanel } from "../panel/thread-panel.js";
 import { routeToHash } from "../router.js";
 import { DocumentCrumb, Topbar } from "../shell/app-shell.js";
@@ -46,6 +47,12 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
   const client = useClient();
   const session = useDocumentSession(props.documentId);
   const drafts = useDrafts(props.documentId);
+  // R17：没有版本时等 Operator 写出第一版，发出评论后等它的 reply；等到了就整页 reload。
+  const follow = useOperatorFollow({
+    documentId: props.documentId,
+    awaitingFirstVersion: session.document !== null && session.document.currentVersionIdx === null,
+    onProgress: session.reload,
+  });
   const [base, setBase] = useState<BaseVersion | null>(null);
 
   // 输入框都由动作触发：回复某一处开一份 Composer，「修改」直接压回一份草稿
@@ -139,6 +146,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     saveDraft: drafts.saveDraft,
     removeDraft: drafts.removeDraft,
     reload: session.reload,
+    followReply: follow.followReply,
   });
   latest.current = {
     client,
@@ -146,6 +154,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     saveDraft: drafts.saveDraft,
     removeDraft: drafts.removeDraft,
     reload: session.reload,
+    followReply: follow.followReply,
   };
 
   const viewHost: HostImplementation = useMemo(() => ({
@@ -157,17 +166,22 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
       saveDraft: latest.current.saveDraft,
       removeDraft: latest.current.removeDraft,
       onSent: latest.current.reload,
-    }, request),
+    }, request).then((detail) => {
+      const sent = sentCommentOf(detail);
+      latest.current.followReply(sent.threadId, sent.commentIdx);
+      return detail;
+    }),
   }), [props.documentId]);
 
   const send = async (draft: Draft) => {
     try {
-      await sendDraft(client, props.documentId, draft);
+      const sent = await sendDraft(client, props.documentId, draft);
       drafts.removeDraft(draft.draftId);
       setDraftFailures((previous) => removeKey(previous, draft.draftId));
       // carry-forward 1：reload() 会把 loading 重新置 true，但下面的早退已经改成
       // 只在“还没有任何内容”时才整页早退，所以这次刷新不会把已经渲染的面板闪掉。
       session.reload();
+      follow.followReply(sent.threadId, sent.commentIdx);
     } catch (cause) {
       // 失败一律保留草稿，复用原 idempotencyKey 重试——永远不丢用户写的字。
       setDraftFailures((previous) => ({ ...previous, [draft.draftId]: errorText(cause) }));
@@ -286,6 +300,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
             只读 · 内容由 Agent 编辑
           </span>
           {session.loading && <span className="refreshing-badge" aria-live="polite">正在刷新…</span>}
+          {follow.waitingForReply && <span className="refreshing-badge" aria-live="polite">等待 Operator 回复…</span>}
         </div>
       </Topbar>
 
@@ -310,6 +325,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
       {session.failure !== null && (
         <p role="alert" className="reload-error-banner">刷新失败：{session.failure.message}</p>
       )}
+      {follow.notice !== null && <p role="status" className="operator-wait-banner">{follow.notice}</p>}
 
       <div className={`doc-workspace${split ? " compare" : ""}`}>
         <section className="content-area">

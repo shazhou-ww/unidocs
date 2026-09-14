@@ -9,6 +9,7 @@ import type {
   DocumentLocation,
   DocumentRecord,
   MessageContent,
+  PublicDocumentType,
   ReplyRecord,
   ThreadDetail,
   VersionRecord,
@@ -49,6 +50,8 @@ export interface SeedDocument {
 
 export interface MemorySeed {
   readonly documents: readonly SeedDocument[];
+  /** listPublicDocumentTypes 的内容；省略时为空目录。 */
+  readonly documentTypes?: readonly PublicDocumentType[];
 }
 
 interface ThreadState {
@@ -92,9 +95,11 @@ function stamp(tick: number): string {
 export class MemoryStore {
   readonly documents = new Map<DocumentId, DocumentState>();
   readonly receipts = new Map<string, IdempotencyReceipt>();
+  readonly documentTypes: readonly PublicDocumentType[];
   private tick = 0;
 
   constructor(seed: MemorySeed = { documents: [] }) {
+    this.documentTypes = seed.documentTypes ?? [];
     for (const doc of seed.documents) this.loadDocument(doc);
   }
 

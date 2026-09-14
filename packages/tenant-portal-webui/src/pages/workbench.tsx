@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { Bot, Search } from "lucide-react";
+import { Bot, Plus, Search } from "lucide-react";
 import type { DocumentRecord } from "@unidocs/protocol-tenant-portal";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
 import { useClient } from "../client-context.js";
@@ -16,6 +16,7 @@ import { createDraftStore } from "../drafts/draft-store.js";
 import { loadDiscussionSummary, type DiscussionSummary } from "../model/discussion-summary.js";
 import { routeToHash } from "../router.js";
 import { PrivacyNote, Topbar, WorkspaceCrumb } from "../shell/app-shell.js";
+import { CreateDocumentForm } from "./create-document-form.js";
 
 interface Entry {
   readonly document: DocumentRecord;
@@ -48,6 +49,7 @@ export function WorkbenchPage() {
   const [entries, setEntries] = useState<readonly Entry[] | null>(null);
   const [keyword, setKeyword] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +100,14 @@ export function WorkbenchPage() {
             <h1>我的作品</h1>
             <p>想法、草稿，以及持续生长的作品。内容由 Agent 编辑，你留下评论。</p>
           </div>
+          {!creating && (
+            <button type="button" className="primary" onClick={() => setCreating(true)}>
+              <Plus size={14} aria-hidden="true" />新建文档
+            </button>
+          )}
         </div>
+
+        {creating && <CreateDocumentForm onCancel={() => setCreating(false)} />}
 
         <section className="banner agent-strip" role="status" aria-label="Agent 最新回复">
           <div className="row" style={{ gap: 6 }}>

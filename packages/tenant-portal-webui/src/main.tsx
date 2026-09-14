@@ -5,6 +5,7 @@ import {
 } from "@unidocs/tenant-portal-client";
 import { App } from "./app.js";
 import { describeConnectionFailure, loadTenantSession, readCsrfCookie } from "./session/bootstrap.js";
+import { withSessionRefresh } from "./session/refresh-transport.js";
 
 const root = createRoot(document.getElementById("root")!);
 
@@ -50,9 +51,14 @@ async function bootstrap(): Promise<void> {
     const session = await loadTenantSession();
     if (session.kind === "signed-out") { renderSignedOutNotice(); return; }
 
+    // session 用着用着过期：先重新取一次 session 并重试原请求，拿不回来才换成登录提示。
+    // 草稿都在 localStorage 里，换掉页面不会丢用户写的字。
     const client = createTenantPortalClient({
       tenantId: session.tenantId,
-      transport: createHttpTransport({ baseUrl: window.location.origin, csrfToken: readCsrfCookie }),
+      transport: withSessionRefresh(
+        createHttpTransport({ baseUrl: window.location.origin, csrfToken: readCsrfCookie }),
+        { tenantId: session.tenantId, loadSession: () => loadTenantSession(), onSignedOut: renderSignedOutNotice },
+      ),
     });
     root.render(<StrictMode><App client={client} /></StrictMode>);
   } catch (error) {

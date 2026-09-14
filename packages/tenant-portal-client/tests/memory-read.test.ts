@@ -105,6 +105,28 @@ describe("memory transport 读操作", () => {
     if (!result.ok) expect(result.error.error.code).toBe("not_found");
   });
 
+  it("listPublicDocumentTypes 返回种子里的文档类型，Page 形状", async () => {
+    const markdown = {
+      documentType: "markdown",
+      typeCardBundleId: "tcb-1",
+      typeCard: {
+        locales: { en: { name: "Markdown", description: "", sampleThumbnailAlt: "sample" } },
+        icon: { kind: "svg" as const, url: "https://bundles.example/icon.svg" },
+        sampleThumbnailUrl: "https://bundles.example/sample.webp",
+      },
+      viewBundleId: "vb-1",
+      availableDocumentContractIdxs: [0],
+    };
+    const typed = createTenantPortalClient({
+      tenantId: "t1",
+      transport: createMemoryTransport({ seed: { ...seeded(), documentTypes: [markdown] } }),
+    });
+
+    expect(await typed.listPublicDocumentTypes()).toEqual({ items: [markdown], nextCursor: null });
+    // 没播种类型时是空页，不是 not_found。
+    expect(await client.listPublicDocumentTypes()).toEqual({ items: [], nextCursor: null });
+  });
+
   it("每个错误都带非空 requestId", async () => {
     const transport = createMemoryTransport({ seed: seeded() });
     const result = await transport({ method: "GET", path: "/api/v1/tenants/t1/documents/nope" });
