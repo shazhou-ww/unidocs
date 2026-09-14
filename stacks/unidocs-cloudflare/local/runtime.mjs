@@ -502,8 +502,27 @@ export async function startLocalRuntime({
   // also move the CAS admin BFF off its local mock provider. Never log these.
   const serviceDevVars = {};
   for (const component of serviceWorkers(services)) {
-    if (!component.devVars) continue;
-    serviceDevVars[component.name] = await readDevVars(join(ROOT, component.devVars));
+    const devVars = component.devVars ? await readDevVars(join(ROOT, component.devVars)) : {};
+    serviceDevVars[component.name] = {
+      ...devVars,
+      // The portal reads snapshot blobs out of UniCAS under the stack's own
+      // authority - the same fixture seedMiddlewareStacks just registered
+      // into CAS_CONTROL_DB, not the gateway's capabilityFixture (its issuer
+      // looks like `unidocs-gateway:local:...` and CAS never sees its key).
+      // `services.mjs` only declares the requirement (`component.cas`); the
+      // values are resolved here because that file has to stay dependency-free.
+      ...(component.cas
+        ? {
+            CAS_ORIGIN: casOrigin ?? urls.edge,
+            CAS_STACK_ID: resolvedStackFixture.stackId,
+            CAS_ISSUER: resolvedStackFixture.issuer,
+            CAS_AUDIENCE: resolvedStackFixture.audience,
+            CAS_REF_DOMAIN: "doc",
+            CAS_SIGNING_KID: resolvedStackFixture.kid,
+            CAS_SIGNING_KEY: resolvedStackFixture.privateKeyPkcs8,
+          }
+        : {}),
+    };
   }
   const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 

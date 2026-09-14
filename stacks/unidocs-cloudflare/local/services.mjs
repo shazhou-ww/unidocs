@@ -39,6 +39,17 @@ export const SERVICE_TARGETS = {
       d1Binding: "DB",
       /** Type-card bundle objects: an R2 bucket reached on its own origin. */
       r2Binding: "BUNDLES",
+      /**
+       * The portal reads snapshot blobs out of UniCAS and retains their
+       * business roots. It never writes blob content - an Agent does that
+       * directly - so what it needs is a read credential plus the stack
+       * authority that lets it move root references.
+       *
+       * Declared here, resolved in runtime.mjs: this file must stay
+       * dependency-free, and the values come from the CAS fixture the runtime
+       * already builds.
+       */
+      cas: true,
       bundlePort: PORTAL_BUNDLE_PORT,
       /**
        * Optional .dev.vars file merged into this worker's bindings — the
