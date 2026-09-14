@@ -16,7 +16,7 @@ import {
   type TenantContext,
   type TenantDocumentRepository,
 } from "@unidocs/portal-service";
-import { decodeCursor, encodeCursor } from "./cursor.js";
+import { decodeCursor, DEFAULT_PAGE_LIMIT, encodeCursor } from "./cursor.js";
 
 interface DocumentRow {
   readonly tenant_id: string;
@@ -145,7 +145,7 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
       if (!key) throw new TenantOperationError("invalid_request");
       before = key;
     }
-    const limit = query.limit ?? 25;
+    const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
     const result = await this.database.prepare(
       `SELECT tenant_id, document_id, name, document_type, current_version_idx, created_at FROM portal_documents
@@ -252,7 +252,7 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
       if (!key) throw new TenantOperationError("invalid_request");
       before = key;
     }
-    const limit = query.limit ?? 25;
+    const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
     const result = await this.database.prepare(
       `SELECT audit_event_id, actor_id, action, before_version_idx, after_version_idx, reason, request_id, occurred_at

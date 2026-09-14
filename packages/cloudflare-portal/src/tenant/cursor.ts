@@ -2,18 +2,36 @@
  * Opaque list cursors.
  *
  * The contract says a cursor is opaque and bounded (TENANT_LIMITS.cursor is
- * 1024), so callers must never parse one. Every tenant list orders by
- * (created_at DESC, id DESC); the cursor is simply the last row's pair, which
- * makes paging a keyset comparison rather than an OFFSET scan.
+ * 1024), so callers must never parse one: `CursorKey` is just an `(at, id)`
+ * pair, and what that pair *means* belongs entirely to the list that issued
+ * it, not to this module. Two of the four tenant lists page by
+ * `(created_at DESC, id DESC)` (documents, threads); `version-repository.ts`
+ * pages versions by `version_idx ASC` (birth order), reusing this shape with
+ * `at` holding the version index and `id` redundantly holding the same value
+ * as a string, only to satisfy `decodeCursor`'s non-empty-id requirement;
+ * `catalog-repository.ts` pages the catalog by `document_type DESC`, with
+ * `at` fixed at `0` and `id` holding the document type. Because the encoding
+ * carries no tag for which list produced it, a cursor from one list fed to
+ * another decodes without error and is silently misinterpreted as that
+ * list's own keyset - see the task report for whether that is worth a kind
+ * tag in a later slice.
  *
  * Decoding returns null instead of throwing: a malformed cursor is a client
  * mistake the service layer reports as invalid_request, not an exception.
  */
 export interface CursorKey {
-  /** Epoch seconds, matching the INTEGER timestamps in the tenant tables. */
+  /** Meaning is the calling list's: epoch seconds for most lists, a raw index for versions, or unused (0) for the catalog. */
   readonly at: number;
   readonly id: string;
 }
+
+/**
+ * Default page size when a caller omits `limit`. `PaginationQuerySchema`
+ * (packages/protocol-tenant-portal/src/schemas.ts) bounds `limit` to 1..100
+ * but declares no default of its own, so every tenant list repository picks
+ * this same number via `query.limit ?? DEFAULT_PAGE_LIMIT`.
+ */
+export const DEFAULT_PAGE_LIMIT = 25;
 
 const MAX_CURSOR_LENGTH = 1_024;
 

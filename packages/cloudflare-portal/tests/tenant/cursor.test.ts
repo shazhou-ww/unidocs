@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeCursor, encodeCursor } from "../../src/tenant/cursor.js";
+import { DEFAULT_PAGE_LIMIT, decodeCursor, encodeCursor } from "../../src/tenant/cursor.js";
 
 /**
  * Builds a base64url cursor from an arbitrary byte payload, the same way
@@ -65,5 +65,11 @@ describe("cursor", () => {
     ["id that is empty", cursorFor([1, ""])],
   ] as const)("rejects %s without throwing", (_label, cursor) => {
     expect(decodeCursor(cursor)).toBeNull();
+  });
+
+  it("C2: exports the shared default page limit within PaginationQuerySchema's 1..100 bound", () => {
+    expect(DEFAULT_PAGE_LIMIT).toBe(25);
+    expect(DEFAULT_PAGE_LIMIT).toBeGreaterThanOrEqual(1);
+    expect(DEFAULT_PAGE_LIMIT).toBeLessThanOrEqual(100);
   });
 });

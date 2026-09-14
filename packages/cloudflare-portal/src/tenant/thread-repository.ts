@@ -15,7 +15,7 @@ import {
   TenantOperationError,
   type CommentAnchor, type CommentAppendCommand, type TenantContext, type TenantThreadRepository, type ThreadCreateCommand,
 } from "@unidocs/portal-service";
-import { decodeCursor, encodeCursor } from "./cursor.js";
+import { decodeCursor, DEFAULT_PAGE_LIMIT, encodeCursor } from "./cursor.js";
 
 interface CommentAnchorRow {
   readonly document_contract_idx: number;
@@ -366,7 +366,7 @@ export class D1TenantThreadRepository implements TenantThreadRepository {
       if (!key) throw new TenantOperationError("invalid_request");
       before = key;
     }
-    const limit = query.limit ?? 25;
+    const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
     const openFilter = query.open === undefined ? null : (query.open ? 1 : 0);
 
     const result = await this.database.prepare(

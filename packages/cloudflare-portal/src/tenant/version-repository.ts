@@ -14,7 +14,7 @@ import {
   type VersionSnapshot,
 } from "@unidocs/portal-service";
 import type { SnapshotStore } from "../snapshot-store.js";
-import { decodeCursor, encodeCursor } from "./cursor.js";
+import { decodeCursor, DEFAULT_PAGE_LIMIT, encodeCursor } from "./cursor.js";
 
 interface VersionRow {
   readonly version_idx: number;
@@ -61,7 +61,7 @@ export class D1TenantVersionRepository implements TenantVersionRepository {
       if (!key) throw new TenantOperationError("invalid_request");
       after = key.at;
     }
-    const limit = query.limit ?? 25;
+    const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
     const result = await this.database.prepare(
       `SELECT version_idx, parent_version_idx, document_contract_idx, author_agent_id, submission_id, addressed_comments_json, created_at

@@ -471,15 +471,13 @@ describe("D1TenantThreadRepository.loadCommentAnchor (real D1)", () => {
  * idempotency receipt shape, the append-only sequence ordering, and above all
  * the `comment_idx` allocation - so, matching the two blocks above, they are
  * proven here against real D1 running under Miniflare rather than the
- * SQL-blind double. The double cannot evaluate the `INSERT ... SELECT ...
- * RETURNING` this task exists to get right, so a double-only test of it would
- * pass whether or not the allocation is actually race-free.
+ * SQL-blind double. The double cannot evaluate the `SELECT COALESCE(MAX(...),
+ * -1) + 1` proposal read and the batched insert-with-explicit-index this task
+ * exists to get right, so a double-only test of it would pass whether or not
+ * the allocation is actually race-free.
  *
- * `RETURNING` on this `INSERT ... SELECT` shape was empirically confirmed to
- * work under D1-via-Miniflare (a throwaway probe against this exact query
- * returned `{ comment_idx: 1 }`) before it was relied on below; see the task
- * report for the transcript. D1 also enforces `FOREIGN KEY` constraints by
- * default (also confirmed by the same probe, and documented at
+ * D1 enforces `FOREIGN KEY` constraints by default (confirmed against a real
+ * D1 instance under Miniflare, and documented at
  * developers.cloudflare.com/d1/sql-api/foreign-keys/), which is what makes
  * appending to a nonexistent thread fail without any extra existence check.
  */

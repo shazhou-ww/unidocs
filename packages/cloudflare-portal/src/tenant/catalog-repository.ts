@@ -9,7 +9,7 @@ import {
   type PublicDocumentType,
 } from "@unidocs/protocol-tenant-portal";
 import { TenantOperationError, type TenantCatalogRepository, type TenantContext } from "@unidocs/portal-service";
-import { decodeCursor, encodeCursor } from "./cursor.js";
+import { decodeCursor, DEFAULT_PAGE_LIMIT, encodeCursor } from "./cursor.js";
 
 interface DocumentTypeRow {
   readonly document_type: string;
@@ -38,7 +38,7 @@ export class D1TenantCatalogRepository implements TenantCatalogRepository {
       if (!key) throw new TenantOperationError("invalid_request");
       before = key.id;
     }
-    const limit = query.limit ?? 25;
+    const limit = query.limit ?? DEFAULT_PAGE_LIMIT;
 
     const result = await this.database.prepare(`SELECT document_type, registration_json FROM portal_document_types
       WHERE enabled = 1 AND (?1 IS NULL OR document_type < ?1)
