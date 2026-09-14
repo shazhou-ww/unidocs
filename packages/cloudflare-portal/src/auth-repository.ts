@@ -106,8 +106,8 @@ export class D1PortalAuthRepository {
       .bind(crypto.randomUUID(), memberId, action, memberId, now, requestId));
     const familyId = crypto.randomUUID();
     statements.push(
-      this.database.prepare("UPDATE portal_session_families SET revoked_at = ? WHERE member_id = ? AND revoked_at IS NULL").bind(now, memberId),
-      this.database.prepare("DELETE FROM portal_sessions WHERE family_id IN (SELECT family_id FROM portal_session_families WHERE member_id = ?)").bind(memberId),
+      this.database.prepare("DELETE FROM portal_sessions WHERE expires_at <= ?").bind(now),
+      this.database.prepare("DELETE FROM portal_session_families WHERE NOT EXISTS (SELECT 1 FROM portal_sessions WHERE portal_sessions.family_id = portal_session_families.family_id)"),
       this.database.prepare("INSERT INTO portal_session_families (family_id, member_id, created_at) VALUES (?, ?, ?)").bind(familyId, memberId, now),
       this.database.prepare("INSERT INTO portal_sessions VALUES (?, ?, ?, ?, ?, ?)").bind(issued.session.sessionHash, familyId, issued.session.csrfHash, JSON.stringify(verified), now, issued.session.expiresAt),
       this.database.prepare("INSERT INTO portal_auth_audit VALUES (?, ?, 'session.created', ?, ?)").bind(crypto.randomUUID(), memberId, now, requestId),

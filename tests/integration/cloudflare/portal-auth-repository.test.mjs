@@ -197,6 +197,7 @@ test("administrator DELETE enforces ETag and self protection, revokes target ses
   const added = await memberService.add(context, { email: "second@example.com" }, "add-second", "add-second");
   const secondIdentity = googleIdentityFromConfirmedLogin({ iss: identity.issuer, sub: "second", email: "second@example.com", email_verified: true }, now);
   const secondIssued = await repository.completeLogin(secondIdentity, null, "bind-second");
+  const secondConcurrentIssued = await repository.completeLogin(secondIdentity, null, "login-second-concurrent");
   const target = await memberService.get(context, added.adminId);
   const self = await memberService.get(context, context.memberId);
   const config = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "gateway-client", GATEWAY_OIDC_CLIENT_SECRET: "fixture-secret" }, "https://portal.test");
@@ -217,6 +218,7 @@ test("administrator DELETE enforces ETag and self protection, revokes target ses
   expect((await remove()).status).toBe(204);
   expect((await handle(new Request(`${base}/${target.adminId}`, { headers: { cookie } }))).status).toBe(404);
   expect(await repository.findSession(secondIssued.session.sessionHash)).toBeNull();
+  expect(await repository.findSession(secondConcurrentIssued.session.sessionHash)).toBeNull();
   expect(await database.prepare("SELECT active FROM portal_administrators WHERE member_id = ?").bind(target.adminId).first("active")).toBe(0);
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_idempotency_receipts WHERE operation = 'removeAdministratorMember'").first("count")).toBe(1);
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_admin_audit WHERE action = 'administrator.removed'").first("count")).toBe(1);
@@ -476,14 +478,29 @@ test("uninvited identities cannot bootstrap or replace the configured initial ad
   expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_administrators").first("count")).toBe(1);
 });
 
-test("relogin invalidates old sessions and logout revokes the current family", async () => {
+test("concurrent relogin preserves live sessions, logout revokes only the current family, and login prunes expired records", async () => {
   const first = await repository.completeLogin(identity, identity.email, "first");
-  const next = await repository.completeLogin(identity, null, "next");
+  const [next, concurrent] = await Promise.all([
+    repository.completeLogin(identity, null, "next"),
+    repository.completeLogin(identity, null, "concurrent"),
+  ]);
   expect(next.memberId).toBe(first.memberId);
-  expect(await repository.findSession(first.session.sessionHash)).toBeNull();
+  expect(concurrent.memberId).toBe(first.memberId);
+  expect(await repository.findSession(first.session.sessionHash)).not.toBeNull();
   expect(await repository.findSession(next.session.sessionHash)).not.toBeNull();
+  expect(await repository.findSession(concurrent.session.sessionHash)).not.toBeNull();
   await repository.revokeSession(next.session.sessionHash, next.memberId, "logout");
   expect(await repository.findSession(next.session.sessionHash)).toBeNull();
+  expect(await repository.findSession(first.session.sessionHash)).not.toBeNull();
+  expect(await repository.findSession(concurrent.session.sessionHash)).not.toBeNull();
+  await repository.revokeSession(concurrent.session.sessionHash, concurrent.memberId, "logout-concurrent");
+  await database.prepare("UPDATE portal_sessions SET created_at = ?, expires_at = ? WHERE session_hash = ?")
+    .bind(now - 10, now - 1, first.session.sessionHash).run();
+  const latest = await repository.completeLogin(identity, null, "latest");
+  expect(await repository.findSession(first.session.sessionHash)).toBeNull();
+  expect(await repository.findSession(latest.session.sessionHash)).not.toBeNull();
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_sessions").first("count")).toBe(1);
+  expect(await database.prepare("SELECT COUNT(*) AS count FROM portal_session_families").first("count")).toBe(1);
 });
 
 test("invitation binding persists once and removed members immediately lose access", async () => {

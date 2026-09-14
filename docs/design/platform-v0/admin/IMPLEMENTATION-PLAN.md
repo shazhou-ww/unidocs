@@ -449,7 +449,7 @@ Cloudflare 包只在构建阶段消费 WebUI 产物，浏览器包不反向依�
 - [x] 实现 OIDC authorization code + PKCE、nonce、浏览器绑定和单次 state port，并通过模拟 Google/workerd 测试。
 - [x] 实现公开登录提示页、Google `prompt=select_account`、浏览器授权拒绝页、幂等 logout 与陈旧 callback 页面无闪烁恢复。
 - [x] 实现 hashed session、`__Host-` cookie、CSRF 和逐请求成员有效性鉴权模块。
-- [x] 接通 D1 state 消费、bootstrap/绑定、session family 创建与登录替换/撤销、BFF logout；当前采用单管理员单活跃 session。
+- [x] 接通 D1 state 消费、bootstrap/绑定、session family 创建与撤销、BFF logout；同一管理员可保留多个独立的 8 小时 session，重新登录不撤销其他会话，logout 只撤销当前 family，移除管理员仍撤销该成员全部会话。成功登录会清理过期 session 与无 session 的 family。
 - [ ] 完成过期登录 state、session 和撤销 family 的有界清理任务。
 - [x] 根据真人失败证据和用户批准，实施独立授权码登录确认时间，不伪造 Google auth_time；保持 Bearer 策略不变。
 - [x] 用户已验收新策略下真实 Google 登录成功；记录本地登录确认，不声称近期密码/MFA 验证。
