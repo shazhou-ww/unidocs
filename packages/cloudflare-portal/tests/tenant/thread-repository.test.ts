@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
+import { TenantOperationError } from "@unidocs/portal-service";
 import { D1TenantThreadRepository } from "../../src/tenant/thread-repository.js";
 import { encodeCursor } from "../../src/tenant/cursor.js";
 import { databaseDouble } from "./d1-double.js";
@@ -461,5 +462,265 @@ describe("D1TenantThreadRepository.loadCommentAnchor (real D1)", () => {
 
     const repository = new D1TenantThreadRepository(db);
     await expect(repository.loadCommentAnchor({ ...context, tenantId: "t-other" }, "doc-1", 0)).resolves.toBeNull();
+  });
+});
+
+/**
+ * `create`, `get` and `appendComment` all live entirely in SQL - the
+ * idempotency receipt shape, the append-only sequence ordering, and above all
+ * the `comment_idx` allocation - so, matching the two blocks above, they are
+ * proven here against real D1 running under Miniflare rather than the
+ * SQL-blind double. The double cannot evaluate the `INSERT ... SELECT ...
+ * RETURNING` this task exists to get right, so a double-only test of it would
+ * pass whether or not the allocation is actually race-free.
+ *
+ * `RETURNING` on this `INSERT ... SELECT` shape was empirically confirmed to
+ * work under D1-via-Miniflare (a throwaway probe against this exact query
+ * returned `{ comment_idx: 1 }`) before it was relied on below; see the task
+ * report for the transcript. D1 also enforces `FOREIGN KEY` constraints by
+ * default (also confirmed by the same probe, and documented at
+ * developers.cloudflare.com/d1/sql-api/foreign-keys/), which is what makes
+ * appending to a nonexistent thread fail without any extra existence check.
+ */
+describe("D1TenantThreadRepository.create / get / appendComment (real D1)", () => {
+  let miniflare: Miniflare;
+  let db: D1Database;
+
+  function collapseToOneStatementPerLine(sql: string): string {
+    return sql
+      .split(";")
+      .map(statement => statement.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .map(statement => `${statement};`)
+      .join("\n");
+  }
+
+  beforeEach(async () => {
+    miniflare = new Miniflare(convertV4MiniflareOptions({
+      workers: [{
+        name: "thread-repository-crud-test",
+        modules: true,
+        script: "export default { fetch() { return new Response('ok'); } };",
+        compatibilityDate: "2025-08-17",
+        d1Databases: { DB: `thread-repository-crud-${crypto.randomUUID()}` },
+      }],
+    }));
+    await miniflare.ready;
+    db = await miniflare.getD1Database("DB", "thread-repository-crud-test") as unknown as D1Database;
+    const migration = fileURLToPath(new URL("../../migrations/0012_tenant.sql", import.meta.url));
+    await db.exec(collapseToOneStatementPerLine(await readFile(migration, "utf8")));
+    await db.prepare(
+      "INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).bind("t-local", "doc-1", "Doc", "markdown", null, 0).run();
+  });
+
+  afterEach(async () => {
+    await miniflare.dispose();
+  });
+
+  const messageContent = { text: "hi", richContent: null, attachments: [] };
+
+  function createCommand(overrides: { key?: string; fingerprint?: string; baseVersionIdx?: number } = {}) {
+    return {
+      context, documentId: "doc-1",
+      key: overrides.key ?? "key-create-1",
+      fingerprint: overrides.fingerprint ?? "fp-create-1",
+      request: { baseVersionIdx: overrides.baseVersionIdx ?? 0, content: messageContent, location: null },
+    };
+  }
+
+  function appendCommand(threadId: string, overrides: { key?: string; fingerprint?: string; baseVersionIdx?: number } = {}) {
+    return {
+      context, documentId: "doc-1", threadId,
+      key: overrides.key ?? "key-append-1",
+      fingerprint: overrides.fingerprint ?? "fp-append-1",
+      request: { baseVersionIdx: overrides.baseVersionIdx ?? 0, content: messageContent, location: null },
+    };
+  }
+
+  it("creates a thread and its first comment (commentIdx 0), returning the complete ThreadDetail", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const detail = await repository.create(createCommand());
+    expect(detail.threadId).toMatch(/^th-/);
+    expect(detail.comments).toHaveLength(1);
+    expect(detail.comments[0]).toMatchObject({ commentIdx: 0, baseVersionIdx: 0, authorId: "user-1", content: messageContent, location: null });
+    expect(detail.replies).toEqual([]);
+  });
+
+  it("replays the same key and fingerprint without creating a second thread", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const first = await repository.create(createCommand());
+    const second = await repository.create(createCommand());
+    expect(second).toEqual(first);
+
+    const count = await db.prepare(
+      "SELECT COUNT(*) as n FROM portal_threads WHERE tenant_id = ? AND document_id = ?",
+    ).bind("t-local", "doc-1").first<{ n: number }>();
+    expect(count?.n).toBe(1);
+  });
+
+  it("rejects the same key reused with a different fingerprint as idempotency_conflict", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    await repository.create(createCommand({ key: "key-conflict", fingerprint: "fp-a" }));
+    await expect(repository.create(createCommand({ key: "key-conflict", fingerprint: "fp-b" })))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
+    // Also confirm it is the tenant operation error type, not some other rejection shape.
+    await expect(repository.create(createCommand({ key: "key-conflict", fingerprint: "fp-c" })))
+      .rejects.toBeInstanceOf(TenantOperationError);
+  });
+
+  it("get returns both append-only sequences, each ascending by index", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    await repository.appendComment(appendCommand(created.threadId, { key: "k2", fingerprint: "f2" }));
+    await db.prepare(
+      `INSERT INTO portal_replies (tenant_id, document_id, thread_id, reply_idx, respond_through_comment_idx, content_json, result_locations_json, author_agent_id, submission_id, created_at)
+       VALUES (?, ?, ?, 0, 1, ?, '[]', 'agent-1', 'sub-1', 5)`,
+    ).bind("t-local", "doc-1", created.threadId, JSON.stringify(messageContent)).run();
+
+    const detail = await repository.get(context, "doc-1", created.threadId);
+    expect(detail?.comments.map(c => c.commentIdx)).toEqual([0, 1]);
+    expect(detail?.replies.map(r => r.replyIdx)).toEqual([0]);
+    expect(detail?.replies[0]?.respondThroughCommentIdx).toBe(1);
+  });
+
+  it("returns null when the thread does not exist", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    await expect(repository.get(context, "doc-1", "th-missing")).resolves.toBeNull();
+  });
+
+  it("is not visible across tenants", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    await expect(repository.get({ ...context, tenantId: "t-other" }, "doc-1", created.threadId)).resolves.toBeNull();
+  });
+
+  it("allocates the appended commentIdx as the current max plus one", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    const second = await repository.appendComment(appendCommand(created.threadId, { key: "k2", fingerprint: "f2" }));
+    expect(second.commentIdx).toBe(1);
+    const third = await repository.appendComment(appendCommand(created.threadId, { key: "k3", fingerprint: "f3" }));
+    expect(third.commentIdx).toBe(2);
+  });
+
+  it("replays the same key and fingerprint without creating a second comment", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    const first = await repository.appendComment(appendCommand(created.threadId, { key: "k2", fingerprint: "f2" }));
+    const second = await repository.appendComment(appendCommand(created.threadId, { key: "k2", fingerprint: "f2" }));
+    expect(second).toEqual(first);
+
+    const detail = await repository.get(context, "doc-1", created.threadId);
+    expect(detail?.comments).toHaveLength(2);
+  });
+
+  it("fails to append to a thread that does not exist", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    await expect(repository.appendComment(appendCommand("th-missing")))
+      .rejects.toMatchObject({ code: "not_found" });
+    await expect(repository.appendComment(appendCommand("th-missing", { key: "k-missing-2", fingerprint: "f-missing-2" })))
+      .rejects.toBeInstanceOf(TenantOperationError);
+  });
+
+  it("appending after the thread has been answered makes it open again", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    await db.prepare(
+      `INSERT INTO portal_replies (tenant_id, document_id, thread_id, reply_idx, respond_through_comment_idx, content_json, result_locations_json, author_agent_id, submission_id, created_at)
+       VALUES (?, ?, ?, 0, 0, ?, '[]', 'agent-1', 'sub-1', 5)`,
+    ).bind("t-local", "doc-1", created.threadId, JSON.stringify(messageContent)).run();
+
+    const closedPage = await repository.list(context, "doc-1", { open: false });
+    expect(closedPage.items).toEqual([{ threadId: created.threadId }]);
+    const closedOpenPage = await repository.list(context, "doc-1", { open: true });
+    expect(closedOpenPage.items).toEqual([]);
+
+    await repository.appendComment(appendCommand(created.threadId, { key: "k2", fingerprint: "f2" }));
+
+    const openPage = await repository.list(context, "doc-1", { open: true });
+    expect(openPage.items).toEqual([{ threadId: created.threadId }]);
+    const nowClosedPage = await repository.list(context, "doc-1", { open: false });
+    expect(nowClosedPage.items).toEqual([]);
+  });
+
+  it("allocates distinct sequential comment indices for concurrent appends, with no application-level lock", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    const results = await Promise.all(
+      Array.from({ length: 5 }, (_, i) =>
+        repository.appendComment(appendCommand(created.threadId, { key: `k-concurrent-${i}`, fingerprint: `f-concurrent-${i}` }))),
+    );
+    const indices = results.map(r => r.commentIdx).sort((a, b) => a - b);
+    expect(indices).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  /**
+   * Every other idempotency test above reuses a key sequentially, so the
+   * initial `replay()` check always catches the duplicate before the batch
+   * ever runs - the "re-read the receipt after a failed batch" branch (the
+   * concurrent-duplicate path `document-repository.ts`'s `create` also has)
+   * is never exercised by any of them. Firing genuinely concurrent `create`
+   * calls with the same key is what forces two callers past the initial
+   * check at once, so only this test can reach that branch.
+   */
+  it("creates exactly one thread when the same key and fingerprint race concurrently", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => repository.create(createCommand({ key: "key-race", fingerprint: "fp-race" }))),
+    );
+    const threadIds = new Set(results.map(r => r.threadId));
+    expect(threadIds.size).toBe(1);
+
+    const count = await db.prepare(
+      "SELECT COUNT(*) as n FROM portal_threads WHERE tenant_id = ? AND document_id = ?",
+    ).bind("t-local", "doc-1").first<{ n: number }>();
+    expect(count?.n).toBe(1);
+  });
+});
+
+/**
+ * The concurrency test above exercises the real allocation query end to end,
+ * but Miniflare's D1 simulation may simply serialize the five concurrent
+ * `appendComment` calls without ever producing an actual primary-key
+ * collision - which would leave the retry branch untested. This double
+ * pins that branch directly: the first `RETURNING` attempt is made to throw
+ * the exact error D1 raises for a `comment_idx` primary-key collision
+ * (confirmed against real D1 in the probe referenced above), and the test
+ * asserts the repository retries rather than surfacing that error.
+ */
+describe("D1TenantThreadRepository.appendComment - retries a comment_idx collision", () => {
+  it("retries the allocation once, and returns the index the second attempt won", async () => {
+    let attempts = 0;
+    const fakeDatabase = {
+      prepare(sql: string) {
+        return {
+          bind: (..._args: unknown[]) => ({
+            first: async () => null,
+            all: async () => {
+              if (!sql.includes("RETURNING comment_idx")) return { results: [] };
+              attempts += 1;
+              if (attempts === 1) {
+                throw new Error(
+                  "D1_ERROR: UNIQUE constraint failed: portal_comments.tenant_id, portal_comments.document_id, portal_comments.thread_id, portal_comments.comment_idx: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+                );
+              }
+              return { results: [{ comment_idx: 4 }] };
+            },
+            run: async () => ({ meta: { changes: 1 } }),
+          }),
+        };
+      },
+      batch: async () => [],
+    } as unknown as D1Database;
+
+    const repository = new D1TenantThreadRepository(fakeDatabase);
+    const record = await repository.appendComment({
+      context, documentId: "doc-1", threadId: "thread-1",
+      key: "retry-key", fingerprint: "retry-fp",
+      request: { baseVersionIdx: 0, content: { text: "hi", richContent: null, attachments: [] }, location: null },
+    });
+    expect(record.commentIdx).toBe(4);
+    expect(attempts).toBe(2);
   });
 });
