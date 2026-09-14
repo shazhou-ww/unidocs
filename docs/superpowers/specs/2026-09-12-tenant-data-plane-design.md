@@ -152,16 +152,26 @@ and reads or writes UniCAS directly.」
 automatically leased. Call `retain` **after the surrounding business transaction
 commits** to preserve the blob root.」
 
-**两侧的 capability 不同权**：
+**两侧的差别在 `refDomain`，不在权限集**（2026-09-14 按实测修正）：
 
 | 角色 | permissions | `refDomain` |
 | --- | --- | --- |
-| Agent | `cas:write` / `cas:lease`（写节点） | 无 |
-| Platform | `cas:read` + root ref 操作 | **有** |
+| Agent | `cas:read` + `cas:write` | 无 |
+| Platform | `cas:read` + `cas:write` | **有** |
 
-`IssueCapabilityInput.refDomain` 的注释限定了这一点：「only stack-authority
-capabilities that write root references carry it」。Platform 是 stack authority，
-Agent 不是——所以 Agent 写得了节点，但动不了业务根，GC 的最终裁量权留在 Platform。
+初稿写的是「Platform 只要 `cas:read`，Agent 才要 write」。实际连上 CAS 后
+`retain` 直接返回 **403**：CAS 把 Root Refs 更新门控在 `cas:write` 上，而这个权限
+同时覆盖 lease blob 内容——**没有更细粒度的「可移动 root ref 但不可 lease」权限**。
+
+所以安全边界落在 `refDomain` 这个 claim 上，不在权限集上。
+`IssueCapabilityInput.refDomain` 的注释限定了它：「only stack-authority capabilities
+that write root references carry it」。CAS 会拒绝任何不带 refDomain 的 Root Refs
+写入，无论 token 持有什么权限。Platform 是 stack authority，Agent 不是——所以 Agent
+写得了节点，动不了业务根，GC 的最终裁量权仍在 Platform。
+
+「Platform 不写 blob 内容」因此是**代码层面的事实而非权限层面的强制**：
+`snapshot-store.ts` 里没有任何 `storeBlob` 调用。这一条靠 code review 维持，
+测试替身验证不出来——它只有真连 CAS 才会暴露。
 
 **字段名需要一行映射**：`@unicas/tenant-blob-client` 的 `CasBlobRef` 是
 `{ hash, size, contentType }`，tenant 契约的 `CasBlobRefSchema` 是

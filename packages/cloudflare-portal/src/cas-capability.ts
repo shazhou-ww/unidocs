@@ -14,6 +14,16 @@
  * an Agent's credential from moving a root reference: only a stack-authority
  * capability carries one, and the CAS service rejects a Root Refs write
  * without it regardless of what permissions the token holds.
+ *
+ * That means this credential's `cas:write` grant is, by itself, also
+ * sufficient to lease (write) blob content - leasing needs no refDomain. What
+ * actually keeps the Platform from writing blob content today is that
+ * `SnapshotStore` (snapshot-store.ts) exposes no `storeBlob` on its surface;
+ * this module and its capability grant it, but the interface callers are
+ * meant to use does not. A caller that takes this `getToken` and feeds it to
+ * a raw `createCasBlobClient` instead of going through `SnapshotStore` would
+ * bypass that discipline and could write blob content as the Platform - do
+ * not do that.
  */
 import { casReadPermission, casWritePermission, type CapabilityIssuer } from "@unidocs/service-auth";
 

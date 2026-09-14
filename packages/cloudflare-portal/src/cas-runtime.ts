@@ -3,13 +3,17 @@
  *
  * The chain is: stack signing key -> capability issuer -> a read capability
  * carrying the stack's refDomain -> tenant CAS client -> blob client -> store.
- * It is assembled per tenant because a capability is tenant-scoped; the
- * issuer itself is not, so callers that serve many tenants should hoist the
- * issuer rather than re-import the key per request.
+ * The store is assembled per tenant because a capability is tenant-scoped, but
+ * the issuer itself is not: `createPortalCasIssuer` builds it once from the
+ * raw PKCS8 key, and `createPortalCasRuntime` accepts a pre-built issuer so a
+ * caller serving many tenants per request (Plan 2's repository, Plan 3's
+ * submissions endpoint) can hoist it instead of re-importing the key on every
+ * call. Omitting it falls back to building a fresh one, which keeps a
+ * single-tenant call site simple at the cost of that re-import.
  */
 import { createCasBlobClient } from "@unicas/tenant-blob-client";
 import { createTenantCasClient } from "@unicas/tenant-client";
-import { createPkcs8CapabilityIssuer } from "@unidocs/service-auth";
+import { createPkcs8CapabilityIssuer, type CapabilityIssuer } from "@unidocs/service-auth";
 import { createPlatformCasCapability } from "./cas-capability.js";
 import { createSnapshotStore, type SnapshotStore } from "./snapshot-store.js";
 
@@ -25,29 +29,49 @@ export interface PortalCasEnv {
 
 const PLATFORM_SUBJECT = "platform:portal";
 
-export async function createPortalCasRuntime(
-  env: PortalCasEnv,
-  tenantId: string,
-): Promise<SnapshotStore> {
-  for (const name of [
-    "CAS_ORIGIN", "CAS_STACK_ID", "CAS_ISSUER",
-    "CAS_AUDIENCE", "CAS_REF_DOMAIN", "CAS_SIGNING_KID", "CAS_SIGNING_KEY",
-  ] as const) {
+const REQUIRED_BINDINGS = [
+  "CAS_ORIGIN", "CAS_STACK_ID", "CAS_ISSUER",
+  "CAS_AUDIENCE", "CAS_REF_DOMAIN", "CAS_SIGNING_KID", "CAS_SIGNING_KEY",
+] as const;
+
+function assertBindingsPresent(env: PortalCasEnv): void {
+  for (const name of REQUIRED_BINDINGS) {
     if (!env[name]) throw new TypeError(`Portal CAS binding ${name} is missing`);
   }
+}
 
-  const issuer = await createPkcs8CapabilityIssuer({
+/**
+ * Builds the Platform's capability issuer from its stack signing key. This is
+ * the reusable half of the chain: unlike the capability it signs, the issuer
+ * is not tenant-scoped, so a caller serving many tenants should build it once
+ * (e.g. per worker invocation, or hoisted further where the runtime allows)
+ * and pass it into `createPortalCasRuntime` instead of letting each call
+ * re-import the raw key.
+ */
+export async function createPortalCasIssuer(env: PortalCasEnv): Promise<CapabilityIssuer> {
+  assertBindingsPresent(env);
+  return createPkcs8CapabilityIssuer({
     issuer: env.CAS_ISSUER,
     kid: env.CAS_SIGNING_KID,
     privateKeyPkcs8: env.CAS_SIGNING_KEY,
   });
+}
+
+export async function createPortalCasRuntime(
+  env: PortalCasEnv,
+  tenantId: string,
+  issuer?: CapabilityIssuer,
+): Promise<SnapshotStore> {
+  assertBindingsPresent(env);
+
+  const resolvedIssuer = issuer ?? await createPortalCasIssuer(env);
 
   const cas = createTenantCasClient({
     baseUrl: env.CAS_ORIGIN,
     stackId: env.CAS_STACK_ID,
     tenantId,
     getToken: createPlatformCasCapability({
-      issuer,
+      issuer: resolvedIssuer,
       tenantId,
       audience: env.CAS_AUDIENCE,
       subject: PLATFORM_SUBJECT,
