@@ -147,8 +147,9 @@ export class D1TenantSubmissionRepository implements TenantSubmissionRepository 
    * was a twin submission (a receipt with this id now exists: `conflict`, so
    * the service replays or rejects by fingerprint), a vanished document or
    * thread (`not_found`), a moved lock (`conflict`), or an index race with
-   * every lock still holding (retry, up to `MAX_COMMIT_ATTEMPTS`, then
-   * `unavailable`).
+   * every lock still holding (retry, logged as `portal_submission_commit_retry`;
+   * after `MAX_COMMIT_ATTEMPTS` the last error is logged as
+   * `portal_submission_commit_failed` and the commit is `unavailable`).
    *
    * Known gap: contract availability (`newDocumentContractIdx` being in the
    * View ∩ Operator intersection) is checked by the service against the state
@@ -158,20 +159,26 @@ export class D1TenantSubmissionRepository implements TenantSubmissionRepository 
    * being available. The version and thread locks are atomic; this one is not.
    */
   async commit(command: SubmissionCommitCommand): Promise<SubmissionCommitOutcome> {
-    const { context, documentId, request } = command;
     const locks = this.locks(command);
 
-    for (let attempt = 0; attempt < MAX_COMMIT_ATTEMPTS; attempt++) {
+    for (let attempt = 1; ; attempt++) {
       const { statements, receipt } = await this.prepareAttempt(command, locks);
       try {
         await this.database.batch(statements);
         return { kind: "committed", receipt };
-      } catch {
-        if (await this.findReceipt(context, documentId, request.submissionId)) return { kind: "conflict" };
-        if (!(await this.locksStillHold(command, locks))) return { kind: "conflict" };
+      } catch (error) {
+        if (await this.classifyFailure(command, locks) === "conflict") return { kind: "conflict" };
+        // Every lock still holds, so nothing explains the failure but an index race or a D1
+        // fault. TenantOperationError carries no cause and the adapter logs only uncoded
+        // errors, so this line is the only record of what failed. Name and message only.
+        const failure = error instanceof Error ? { name: error.name, message: error.message } : { name: typeof error, message: String(error) };
+        if (attempt === MAX_COMMIT_ATTEMPTS) {
+          console.error(JSON.stringify({ event: "portal_submission_commit_failed", attempt, ...failure }));
+          throw new TenantOperationError("unavailable");
+        }
+        console.error(JSON.stringify({ event: "portal_submission_commit_retry", attempt, ...failure }));
       }
     }
-    throw new TenantOperationError("unavailable");
   }
 
   private locks({ context, documentId, request }: SubmissionCommitCommand): Lock[] {
@@ -283,11 +290,15 @@ export class D1TenantSubmissionRepository implements TenantSubmissionRepository 
   }
 
   /**
-   * After a failed batch with no receipt for this id: a vanished document or
-   * thread is `not_found`; otherwise `true` when every lock evaluates as it
-   * did in the guard, meaning the batch lost an index race and may retry.
+   * Explains a failed batch by re-reading the database, never by error text:
+   * a receipt for this submission id now exists (a twin committed first) is
+   * `conflict`, so the service replays or rejects it by fingerprint; a vanished
+   * document or thread throws `not_found`; a lock that no longer evaluates as
+   * the guard required is `conflict`; and with every lock still holding the
+   * batch lost an index race (or hit a fault) and may `retry`.
    */
-  private async locksStillHold({ context, documentId, request }: SubmissionCommitCommand, locks: readonly Lock[]): Promise<boolean> {
+  private async classifyFailure({ context, documentId, request }: SubmissionCommitCommand, locks: readonly Lock[]): Promise<"conflict" | "retry"> {
+    if (await this.findReceipt(context, documentId, request.submissionId)) return "conflict";
     const [documentExists, threadsExist, held] = await Promise.all([
       this.database.prepare("SELECT 1 AS found FROM portal_documents WHERE tenant_id = ? AND document_id = ?")
         .bind(context.tenantId, documentId).first(),
@@ -299,6 +310,6 @@ export class D1TenantSubmissionRepository implements TenantSubmissionRepository 
       ).bind(...lock.bindings).first<{ holds: number }>())),
     ]);
     if (!documentExists || threadsExist.some(thread => !thread)) throw new TenantOperationError("not_found");
-    return held.every(row => row?.holds === 1);
+    return held.every(row => row?.holds === 1) ? "retry" : "conflict";
   }
 }

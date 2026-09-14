@@ -3,7 +3,7 @@
  * CHECK-driven rollback, the primary keys that adjudicate index races and the
  * derived watermarks. All of it is proven against real D1 under Miniflare.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { D1Database } from "@cloudflare/workers-types";
 import type { AddressedComment, AgentSubmissionRequest } from "@unidocs/protocol-platform";
 import { TenantOperationError, type SubmissionCommitCommand, type TenantContext } from "@unidocs/portal-service";
@@ -339,7 +339,9 @@ describe("D1TenantSubmissionRepository (real D1)", () => {
         ).run();
       }));
 
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
       const outcome = await racing.commit(await command(versionRequest("sub-2", 0)));
+      logged.mockRestore();
       expect(outcome.kind).toBe("committed");
       expect(outcome.kind === "committed" && outcome.receipt.version!.versionIdx).toBe(2);
       expect(await currentVersionIdx()).toBe(2);
@@ -358,10 +360,25 @@ describe("D1TenantSubmissionRepository (real D1)", () => {
       await commitOk({ submissionId: "reply-0", threadUpdates: [update("th-2", null, 0)] });
       await seedComment("th-2", 2);
 
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
       const error = await racing.commit(await command({ submissionId: "reply-1", threadUpdates: [update("th-2", 0, 2)] })).catch((caught: unknown) => caught);
+      const lines = logged.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
+      logged.mockRestore();
       expect(error).toBeInstanceOf(TenantOperationError);
       expect((error as TenantOperationError).code).toBe("unavailable");
       expect(batches).toBe(5);
+
+      // The batch fault itself is only visible here: TenantOperationError carries no cause.
+      const retries = lines.filter(line => line.event === "portal_submission_commit_retry");
+      const failures = lines.filter(line => line.event === "portal_submission_commit_failed");
+      expect(retries.map(line => line.attempt)).toEqual([1, 2, 3, 4]);
+      expect(failures).toHaveLength(1);
+      for (const line of [...retries, ...failures]) {
+        expect(Object.keys(line).sort()).toEqual(["attempt", "event", "message", "name"]);
+        expect(line.name).toBe("Error");
+        expect(line.message).toMatch(/UNIQUE constraint failed/);
+      }
+      expect(failures[0]!.attempt).toBe(5);
       await expect(repository.findReceipt(agent, "doc-1", "reply-1")).resolves.toBeNull();
     });
 
