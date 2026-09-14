@@ -4,10 +4,11 @@ import { experimental_ZodSmartCoercionPlugin } from "@orpc/zod/zod4";
 import { tenantApiContract } from "@unidocs/protocol-tenant-portal";
 import {
   createTenantCatalogService, createTenantDocumentService, createTenantThreadService, createTenantVersionService,
-  boundedBytes, parseStrictJson, TenantAccessError, TenantOperationError,
+  TenantAccessError, TenantOperationError,
   type DocumentLocationValidator, type TenantCatalogRepository, type TenantContext, type TenantDocumentRepository,
   type TenantThreadRepository, type TenantVersionRepository,
 } from "@unidocs/portal-service";
+import { readBoundedJsonRequest } from "../bounded-json-request.js";
 import { VersionConflictError } from "./document-repository.js";
 
 export interface TenantHttpDependencies {
@@ -108,22 +109,14 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
     const path = new URL(request.url).pathname;
     let boundedRequest = request;
     if (request.method === "POST") {
-      // Checked here, before oRPC sees the body: its codec would buffer any size,
-      // accept duplicate keys (last one wins), and surface malformed JSON as an
-      // unexpected error rather than a client mistake.
-      if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json" || request.headers.has("content-encoding")) {
-        return Response.json({ error: { code: "invalid_request", message: "A JSON request body is required", requestId } }, { status: 400 });
+      // Checked here, before oRPC sees the body: its codec would buffer a body of
+      // any size and keep the last of two duplicate keys.
+      const bounded = await readBoundedJsonRequest(request, MAX_BODY_BYTES);
+      if (!bounded.ok) {
+        const message = bounded.reason === "not_json" ? "A JSON request body is required" : "Invalid or oversized JSON request";
+        return Response.json({ error: { code: "invalid_request", message, requestId } }, { status: 400 });
       }
-      try {
-        if (!request.body) throw new TypeError("Missing request body");
-        const content = new Uint8Array(MAX_BODY_BYTES);
-        let length = 0;
-        for await (const chunk of boundedBytes(request.body, content.length)) { content.set(chunk, length); length += chunk.byteLength; }
-        parseStrictJson(content.subarray(0, length));
-        boundedRequest = new Request(request.url, { method: request.method, headers: request.headers, body: content.slice(0, length) });
-      } catch {
-        return Response.json({ error: { code: "invalid_request", message: "Invalid or oversized JSON request", requestId } }, { status: 400 });
-      }
+      boundedRequest = bounded.request;
     }
     const handler = new OpenAPIHandler(router, {
       // Query strings arrive as strings; limit, open and versionIdx must be coerced before validation.

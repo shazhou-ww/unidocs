@@ -2,7 +2,8 @@ import { implement, ORPCError } from "@orpc/server";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { experimental_ZodSmartCoercionPlugin } from "@orpc/zod/zod4";
 import { adminApiContract } from "@unidocs/protocol-admin-portal";
-import { AdminOperationError, boundedBytes, createDocumentTypeService, parseStrictJson, type AdminContext, type DocumentTypeRepository } from "@unidocs/portal-service";
+import { AdminOperationError, createDocumentTypeService, type AdminContext, type DocumentTypeRepository } from "@unidocs/portal-service";
+import { readBoundedJsonRequest } from "./bounded-json-request.js";
 
 export function createDocumentTypesHttp(repository: DocumentTypeRepository) {
   const contract = { list: adminApiContract.documentTypes.list, get: adminApiContract.documentTypes.get, create: adminApiContract.documentTypes.create, update: adminApiContract.documentTypes.update };
@@ -43,21 +44,16 @@ export function createDocumentTypesHttp(repository: DocumentTypeRepository) {
     });
     let boundedRequest = request;
     if (request.method === "POST" || request.method === "PATCH") {
-      if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json" || request.headers.has("content-encoding")) {
+      const bounded = await readBoundedJsonRequest(request, 16_384);
+      if (!bounded.ok && bounded.reason === "not_json") {
         return Response.json({ error: { code: "invalid_request", message: "A JSON request body is required", requestId } }, { status: 400 });
       }
-      try {
-        if (!request.body) throw new Error();
-        const content = new Uint8Array(16_384);
-        let length = 0;
-        for await (const chunk of boundedBytes(request.body, content.length)) { content.set(chunk, length); length += chunk.byteLength; }
-        const body = parseStrictJson(content.subarray(0, length));
-        const allowedFields = request.method === "POST" ? ["internalName"] : ["internalName", "typeCardBundleId", "viewBundleId", "builtinOperatorId", "enabled", "reason"];
-        if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).some(field => !allowedFields.includes(field))) throw new Error();
-        boundedRequest = new Request(request.url, { method: request.method, headers: request.headers, body: content.slice(0, length) });
-      } catch {
+      const allowedFields = request.method === "POST" ? ["internalName"] : ["internalName", "typeCardBundleId", "viewBundleId", "builtinOperatorId", "enabled", "reason"];
+      const allowed = (body: unknown) => typeof body === "object" && body !== null && !Array.isArray(body) && Object.keys(body).every(field => allowedFields.includes(field));
+      if (!bounded.ok || !allowed(bounded.body)) {
         return Response.json({ error: { code: "invalid_request", message: "Invalid or oversized JSON request", requestId } }, { status: 400 });
       }
+      boundedRequest = bounded.request;
     }
     const result = await handler.handle(boundedRequest, { context: { admin, requestId } });
     return result.matched ? result.response : new Response(null, { status: 404 });
