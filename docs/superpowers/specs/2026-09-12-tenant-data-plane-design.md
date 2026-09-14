@@ -26,7 +26,7 @@
 | Tenant D1 表 | `packages/cloudflare-portal/migrations/` | 不存在；现有 4 个迁移全是 admin 的 |
 | Worker 路由 | `packages/cloudflare-portal/src/worker.ts` | 只有 `/admin/api/v1/...`，没有 `/api/v1/tenants/...` |
 | Tenant session | — | 不存在；`serveTenantWebUi` 目前跑在 BFF 之前，无登录 |
-| Operator | — | 不存在 |
+| Operator | `packages/cloudflare-markdown/src/operator-endpoint.ts` | discovery 与 probe 已实现（2026-09-14 随 main 到位）；webhook 接收与 submissions 回调待实现 |
 | Agent submissions 端点 | — | 不存在 |
 
 判定依据：全仓搜索 `createTenantDocumentService` / `createTenantThreadService` /
@@ -193,14 +193,15 @@ retain 路径会被执行，**但 release 的接缝（`CasBlobRetentionUpdate`�
 *替代方案*：R2 或 D1 BLOB。均已否决——绕过 CAS 就失去 Merkle 去重、跨版本共享与统一
 GC，而 §10.1 正是为此设立。初稿曾选 R2，评审时明确要求改为 CAS。
 
-### 3.3 Operator：独立 worker + service binding
+### 3.3 Operator：独立 worker + service binding（扩展既有的 markdown worker）
 
-新包 `packages/operator-markdown`，在
-`stacks/unidocs-cloudflare/local/services.mjs` 里注册为一个组件，通过 service binding
-绑给 portal worker。
+Operator 是**独立进程**，经 service binding 绑给 portal worker。但它不是新包：
+`packages/cloudflare-markdown` 已经承载了 `operator-endpoint.ts`（discovery 与 probe
+均已实现，见 §8），所以 webhook 接收与 submissions 回调加在同一个 worker 上，
+`stacks/unidocs-cloudflare/local/services.mjs` 里它已经是一个可选目标。
 
 `canonicalBaseUrl()` 拒绝 `http:` 和显式端口，所以本地 baseUrl 也必须是一个稳定的
-https 形状标识（取 `https://operator-markdown.unidocs.local`），真实流量走 binding 不
+https 形状标识（取 `https://markdown-operator.unidocs.local`），真实流量走 binding 不
 出网。这与 iteration 14 里 `ADMIN_MARKDOWN_SERVICE` 的做法一致：绑定的目的地由部署侧
 管控，JSON 自报身份不等于对任意外部地址的信任。
 
@@ -227,8 +228,9 @@ loopback origin 一律不自动签发，走 401。
 契约规定 Operator 用 `Authorization: Bearer` 而非 cookie，且 Bearer 被拒绝时**不回退
 到 cookie**。v0 的最小实现：
 
-- 本地 runtime 生成一个随机 secret，同时注入 portal worker 与 operator worker 的 binding
-- Platform 侧认这个 token，赋予固定 `principalId`（`agent:operator-markdown`）与固定
+- 本地 runtime 生成一个随机 secret，同时注入 portal worker 与 markdown worker 的 binding
+- Platform 侧认这个 token，赋予固定 `principalId`（`agent:markdown-primary`，与
+  descriptor 的 `declaredOperatorId` 一致）与固定
   scopes `["documents:read", "comments:read", "comments:reply", "versions:submit"]`
 - Bearer 路径不要求 CSRF（契约明示）
 
@@ -338,18 +340,30 @@ reopen operation anywhere in this contract"。`listThreads` 的 `open` 过滤在
 
 `serveTenantWebUi` 保持在 BFF 之前的位置不变——它服务的是静态资源，不需要登录门。
 
-## 8. Operator：`packages/operator-markdown`
+## 8. Operator：扩展 `packages/cloudflare-markdown`，不新建包
 
-一个独立 worker，四个端点：
+**本节于 2026-09-14 随 main 重写。** 初稿计划新建 `packages/operator-markdown`，
+但 main 上的 `feat(admin-portal): validate markdown operators` 与
+`define operator probe proof` 已经把其中两个端点做出来了，实现在
+[`packages/cloudflare-markdown/src/operator-endpoint.ts`](../../../packages/cloudflare-markdown/src/operator-endpoint.ts)。
+新建包会重复一份已经上线的实现，因此改为在该文件上扩展。
 
-| 端点 | 作用 |
+| 端点 | 状态 |
 | --- | --- |
-| `GET /.well-known/unidocs-operator` | 返回 `OperatorDescriptor`：`protocol: "unidocs-operator/v1"`、`declaredOperatorId`、`supportedDocumentTypes: ["markdown"]`、`supportedDocumentContracts: { markdown: [0] }` |
-| `POST /unidocs/probe` | admin 注册时的签名探测端点，回显校验结果。路径须满足 `canonicalProbePath()`：以 `/` 开头、非 `//`、不含 `%`/空白/`?`/`#`、且不等于 discovery path |
-| `POST /tenants/{tenantId}/documents/{documentId}` | 接收 webhook，返回 `{ accepted: true, eventId }` |
-| （出站） | 回调 Platform 的 `POST .../submissions` |
+| `GET /.well-known/unidocs-operator` | **已实现。** 返回 `declaredOperatorId: "markdown-primary"`、`displayName: "Markdown Operator"`、`supportedDocumentContracts: { [documentType]: [0] }`，并带 descriptor 规范 JSON 的 SHA-256 作为 `ETag` |
+| `POST /operator/probe` | **已实现。** 校验 `x-unidocs-probe-signature`，比对 `declaredOperatorId` / `documentType` / `configEtag`，回签 `OperatorProbeReceipt` |
+| `POST /tenants/{tenantId}/documents/{documentId}` | **待实现。** 接收 webhook，返回 `{ accepted: true, eventId }` |
+| （出站）`POST .../submissions` | **待实现。** 回调 Platform 提交 version 与 reply |
 
-行为：
+初稿另有两处细节是我编的，以实现为准：probe 路径是 `/operator/probe`（不是
+`/unidocs/probe`）；probe 认证用**对称 HMAC 密钥**，由 `MARKDOWN_OPERATOR_HMAC_KEY`
+（64 位十六进制）与 `MARKDOWN_OPERATOR_DOCUMENT_TYPE` 两个 binding 提供，签名与验签在
+`@unidocs/service-auth` 的 `signOperatorProbeReceipt` / `verifyOperatorProbeRequest`。
+
+未配置这两个 binding 时端点返回 `503 operator_not_configured`，所以本地 dev 必须把它们
+配上，否则 §11 的 Operator 登记会在 probe 这一步失败。
+
+行为（待实现部分）：
 
 - `document.created` → 提交首个 version，snapshot 为 `{ content: "# {name}\n\n" }`，
   `addressedComments: []`。文档自此可打开
@@ -433,7 +447,9 @@ revision 交集」，不登记 Operator 这个字段恒为空，目录就是空�
 2. 追加 Document Contract revision 0：snapshot schema 为 `{ content: string }`，
    location schema 覆盖 `unidocs.markdown.text-range/v1` 的 `{ start, end, quote }`
 3. 上传最小 Type Card bundle 与 View bundle，并选为 current
-4. 走 `operator-validations` → `operators`，登记 `operator-markdown`
+4. 配好 `MARKDOWN_OPERATOR_HMAC_KEY` 与 `MARKDOWN_OPERATOR_DOCUMENT_TYPE`，然后走
+   `operator-validations` → `operators` 登记 `markdown-primary`。缺这两个 binding 时
+   probe 端点返回 `503 operator_not_configured`，登记会卡在这一步
 5. enable 该 document type
 
 实现位置：`stacks/unidocs-cloudflare/local/` 下的一个模块，与 `doc-types.mjs` /
@@ -466,7 +482,7 @@ TDD。每层都有既定的测试位置：
 | protocol-platform | `packages/protocol-platform/tests/` | contract 形状、schema 边界、中英文档一致性 |
 | repository | `packages/cloudflare-portal/tests/` | 以 `memory/store.ts` 的语义为对照的行为测试；幂等重放、乐观锁、`open` 派生 |
 | HTTP 层 | `packages/cloudflare-portal/tests/` | 照 `document-types.test.ts`：路由、错误码映射、请求体上限 |
-| Operator | `packages/operator-markdown/tests/` | discovery 形状、webhook 接收、submission 构造 |
+| Operator | `packages/cloudflare-markdown/tests/` | webhook 接收、submission 构造（discovery 与 probe 已有既存测试，不重复） |
 | CAS 接入 | `packages/cloudflare-portal/tests/` | stack-authority capability 的 `refDomain` 与权限集；Agent 写入 → Platform 读回的字节往返；retain 之后 GC 仍可读；未 retain 的节点在 lease 过期后不可读 |
 | 端到端 | `tests/integration/cloudflare/` | 照 `portal-local-runtime.test.mjs`：真 workerd 上走完建档 → 初始化 → 评论 → 回复 |
 | 前端 | `packages/tenant-portal-webui/tests/` | CSRF 头、session 引导、401 处理、空态 |
@@ -483,7 +499,7 @@ TDD。每层都有既定的测试位置：
 4. Tenant HTTP 适配层与 worker 路由
 5. Tenant session 与本地自动签发
 6. Agent bearer 认证与 submissions 端点
-7. Webhook 派发 + `operator-markdown` worker + `services.mjs` 注册
+7. Webhook 派发 + 在 `cloudflare-markdown` 上补 webhook 接收与 submissions 回调
 8. dev 种子与前端接线
 
 第 8 步之前端到端跑不通，这是链路本身的依赖顺序决定的，不是切分不当。
@@ -515,7 +531,7 @@ TDD。每层都有既定的测试位置：
 | 租户模型 | 表带 `tenant_id`，v0 单租户 `t-local` | 不做注册流程，也不埋事后改主键的坑 |
 | Tenant 登录 | 本地自动签发，`isLocalDevOrigin` 守卫 | 真实身份源不在本轮范围；复用仓库已有的 loopback 判定 |
 | Agent 凭据 | 本地共享 secret + 固定 scopes | 真实凭据体系是独立议题 |
-| Operator 位置 | 独立 worker + service binding | 契约要求 baseUrl 注册与 discovery；内联会绕过整套机制 |
+| Operator 位置 | 扩展 `cloudflare-markdown`，经 service binding 接入 | 契约要求 baseUrl 注册与 discovery，内联会绕过整套机制；而 discovery/probe 已在该包实现，另起新包是重复造 |
 | Operator 行为 | 按评论内容在「纯 reply」与「reply + 新版本」之间选择 | §7.1 禁止为记录对话而造内容相同的版本；但两条路径都要实现，否则无法区分「正确地选了纯 reply」与「根本不会产生版本」 |
 | `open` 状态 | 不落库，SQL 派生 | 契约明示它不是可切换的存储标志 |
 | 种子写入方式 | 只经公开 admin API | 兼作 admin 控制面的集成测试 |
