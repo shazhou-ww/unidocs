@@ -16,17 +16,7 @@
 import { Validator } from "@cfworker/json-schema";
 import type { DocumentLocationValidator } from "@unidocs/portal-service";
 import { SValueSchemaDialect } from "@unidocs/protocol";
-
-function declaresSBlob(node: unknown): boolean {
-  if (Array.isArray(node)) return node.some(declaresSBlob);
-  if (node !== null && typeof node === "object") {
-    for (const [key, value] of Object.entries(node)) {
-      if (key === "x-unidocs-sblob") return true;
-      if (declaresSBlob(value)) return true;
-    }
-  }
-  return false;
-}
+import { declaresSBlob } from "./svalue-schema.js";
 
 export function createLocationValidator(): DocumentLocationValidator {
   return (location, schema) => {

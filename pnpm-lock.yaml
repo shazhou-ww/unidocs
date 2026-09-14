@@ -477,6 +477,9 @@ importers:
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth
+      '@unidocs/svalue-codec':
+        specifier: workspace:*
+        version: link:../svalue-codec
       agents:
         specifier: 0.21.0
         version: 0.21.0(@babel/core@8.0.1)(@babel/runtime@7.29.7)(@cloudflare/workers-types@4.20260702.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.33(zod@4.4.3))(react@19.2.8)(rolldown@1.2.5)(vite@7.3.6(@types/node@24.13.3)(tsx@4.23.13)(yaml@2.9.0))(zod@4.4.3)

@@ -35,6 +35,7 @@
     "@unidocs/protocol-platform": "workspace:*",
     "@unidocs/protocol-tenant-portal": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
+    "@unidocs/svalue-codec": "workspace:*",
     "agents": "0.21.0",
     "jose": "^6.2.10",
     "oauth4webapi": "^3.8.8"

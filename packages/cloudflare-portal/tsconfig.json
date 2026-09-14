@@ -12,6 +12,7 @@
     { "path": "../portal-service" },
     { "path": "../protocol" },
     { "path": "../protocol-admin-portal" },
-    { "path": "../protocol-tenant-portal" }
+    { "path": "../protocol-tenant-portal" },
+    { "path": "../svalue-codec" }
   ]
 }
