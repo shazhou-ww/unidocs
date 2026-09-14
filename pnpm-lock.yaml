@@ -465,6 +465,9 @@ importers:
       '@unidocs/protocol-platform':
         specifier: workspace:*
         version: link:../protocol-platform
+      '@unidocs/protocol-tenant-portal':
+        specifier: workspace:*
+        version: link:../protocol-tenant-portal
       '@unidocs/service-auth':
         specifier: workspace:*
         version: link:../service-auth

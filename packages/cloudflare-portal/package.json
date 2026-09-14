@@ -31,6 +31,7 @@
     "@unidocs/portal-service": "workspace:*",
     "@unidocs/protocol-admin-portal": "workspace:*",
     "@unidocs/protocol-platform": "workspace:*",
+    "@unidocs/protocol-tenant-portal": "workspace:*",
     "@unidocs/service-auth": "workspace:*",
     "agents": "0.21.0",
     "jose": "^6.2.10",
