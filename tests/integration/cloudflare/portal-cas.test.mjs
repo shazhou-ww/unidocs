@@ -91,6 +91,24 @@ describe("snapshot blob round trip", () => {
     await expect(store.retain(ref, `req-${crypto.randomUUID()}`)).resolves.toBeUndefined();
   }, 60_000);
 
+  it("refuses the Agent's own credential when it attempts to retain a root reference", async () => {
+    const payload = new TextEncoder().encode("# hello\n\nagent cannot retain");
+
+    const agent = await agentBlobClient(runtime);
+    const written = await agent.storeBlob(bodyStream(payload), {
+      contentType: SNAPSHOT_TYPE,
+      size: payload.byteLength,
+    });
+    expect(written.hash).toBeTruthy();
+
+    // The Agent's capability carries cas:read + cas:write but no refDomain claim.
+    // CAS gates Root Refs writes on refDomain, not on the permission set, so
+    // this must be refused even though the same credential can write blobs.
+    await expect(
+      agent.retain({ requestId: `req-${crypto.randomUUID()}`, references: { [written.hash]: 1 } }),
+    ).rejects.toThrow(/refDomain/);
+  }, 60_000);
+
   it("refuses a reference whose size disagrees with the stored blob", async () => {
     const payload = new TextEncoder().encode("mismatch");
     const agent = await agentBlobClient(runtime);

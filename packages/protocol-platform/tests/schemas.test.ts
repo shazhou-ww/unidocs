@@ -1,13 +1,23 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { CasBlobRef, DocumentLocation, MessageContent } from "../src/index.js";
+import type {
+  CasBlobRef,
+  DocumentLocation,
+  MessageContent,
+  OperatorWebhookRequest,
+  ReplyRecord,
+  SubmissionReceipt,
+  VersionRecord,
+} from "../src/index.js";
 import {
   AgentSubmissionRequestSchema,
   CasBlobRefSchema,
   DocumentLocationSchema,
   MessageContentSchema,
   OperatorWebhookRequestSchema,
+  ReplyRecordSchema,
   SubmissionReceiptSchema,
   VersionIdxSchema,
+  VersionRecordSchema,
 } from "../src/schemas.js";
 
 describe("shared primitives", () => {
@@ -15,6 +25,10 @@ describe("shared primitives", () => {
     expectTypeOf<typeof CasBlobRefSchema._output>().toEqualTypeOf<CasBlobRef>();
     expectTypeOf<typeof DocumentLocationSchema._output>().toEqualTypeOf<DocumentLocation>();
     expectTypeOf<typeof MessageContentSchema._output>().toEqualTypeOf<MessageContent>();
+    expectTypeOf<typeof VersionRecordSchema._output>().toEqualTypeOf<VersionRecord>();
+    expectTypeOf<typeof ReplyRecordSchema._output>().toEqualTypeOf<ReplyRecord>();
+    expectTypeOf<typeof SubmissionReceiptSchema._output>().toEqualTypeOf<SubmissionReceipt>();
+    expectTypeOf<typeof OperatorWebhookRequestSchema._output>().toEqualTypeOf<OperatorWebhookRequest>();
   });
 
   it("rejects a negative record index", () => {
