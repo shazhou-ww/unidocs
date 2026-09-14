@@ -69,6 +69,24 @@ export class D1TenantCatalogRepository implements TenantCatalogRepository {
 }
 
 /**
+ * The contract revisions a document of this type can currently be written in:
+ * the current View's supported revisions intersected with the current built-in
+ * Operator's, ascending. Empty while either selection is missing. The catalog
+ * publishes this list and the submission service decides new versions against
+ * it (via `submission-repository.ts`'s `loadState`), so both read it from here.
+ */
+export function availableContractIdxs(
+  registration: Partial<Pick<DocumentTypeRegistration, "documentType" | "viewBundle" | "builtinOperator">>,
+): number[] {
+  const { documentType, viewBundle, builtinOperator } = registration;
+  if (!documentType || !viewBundle || !builtinOperator) return [];
+  const operatorIdxs = builtinOperator.descriptor.supportedDocumentContracts[documentType] ?? [];
+  return viewBundle.manifest.supportedDocumentContractIdxs
+    .filter(idx => operatorIdxs.includes(idx))
+    .sort((a, b) => a - b);
+}
+
+/**
  * Builds one `PublicDocumentType` from a row's registration, or `null` when
  * the type must not be published: any of the three current selections
  * (Type Card bundle, View bundle, built-in Operator) is missing, the View and
@@ -110,10 +128,7 @@ function buildPublicDocumentType(row: DocumentTypeRow): PublicDocumentType | nul
   const { typeCardBundle, viewBundle, builtinOperator } = registration;
   if (!typeCardBundle || !viewBundle || !builtinOperator) return null;
 
-  const operatorIdxs = builtinOperator.descriptor.supportedDocumentContracts[registration.documentType] ?? [];
-  const availableDocumentContractIdxs = viewBundle.manifest.supportedDocumentContractIdxs
-    .filter(idx => operatorIdxs.includes(idx))
-    .sort((a, b) => a - b);
+  const availableDocumentContractIdxs = availableContractIdxs(registration);
   if (availableDocumentContractIdxs.length === 0) return null;
 
   const { manifest, bundleUrl } = typeCardBundle;
