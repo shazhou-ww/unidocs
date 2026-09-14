@@ -100,6 +100,9 @@ test("bundleOrigin accepts a loopback origin for local development, and nothing 
     "http://127.0.0.1.evil.test:8796",      // a different host that merely starts with it
     "https://bundles.shazhou.work/prefix",  // path, query and hash stay refused either way
     "https://bundles.shazhou.work/?a=1",
+    "http://127.0.0.1:8796/x",              // loopback is scheme-only: path still refused
+    "http://127.0.0.1:8796?a=1",
+    "http://127.0.0.1:8796#frag",
   ]) {
     expect(() => createViewBundleService(repository, store, { bundleOrigin: origin }), origin)
       .toThrow(/bundleOrigin must be an HTTPS origin/);
