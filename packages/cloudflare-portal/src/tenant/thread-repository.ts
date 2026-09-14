@@ -54,6 +54,27 @@ interface ReplyRow {
 /** Idempotency scope for `create`: matches the operation name `threads.ts` uses when computing the fingerprint. */
 const CREATE_THREAD_OPERATION = "createThread";
 
+/**
+ * The receipt `operation` to read and write for a `create` call, scoped to
+ * `documentId`.
+ *
+ * The service's fingerprint - `schemaHash({ operation: "createThread", body })`
+ * in `packages/portal-service/src/tenant/threads.ts`, which this repository
+ * must not modify - does not include `documentId`. The receipt primary key is
+ * `(tenant_id, actor_id, operation, key)`, so without this, the same
+ * idempotency key and body sent to two different documents would replay the
+ * first document's thread for the second: the caller believes it opened a
+ * thread on document B and instead gets back document A's thread. Since the
+ * repository cannot widen the service's fingerprint, it scopes the one thing
+ * it does control - the `operation` string it records the receipt under - by
+ * document instead. Centralized here, and called from every read and write
+ * of the receipt in `create`, so the read and write scopes can never drift
+ * apart from each other.
+ */
+function createThreadOperation(documentId: string): string {
+  return `${CREATE_THREAD_OPERATION}:${documentId}`;
+}
+
 /** Idempotency scope for `appendComment`: matches the operation name `threads.ts` uses when computing the fingerprint. */
 const APPEND_COMMENT_OPERATION = "appendComment";
 
@@ -144,8 +165,9 @@ export class D1TenantThreadRepository implements TenantThreadRepository {
    */
   async create(command: ThreadCreateCommand): Promise<ThreadDetail> {
     const { context, documentId, key, fingerprint, request } = command;
+    const operation = createThreadOperation(documentId);
 
-    const replayed = await this.replay(context, CREATE_THREAD_OPERATION, key, fingerprint, ThreadDetailSchema);
+    const replayed = await this.replay(context, operation, key, fingerprint, ThreadDetailSchema);
     if (replayed) return replayed;
 
     const threadId = `th-${crypto.randomUUID()}`;
@@ -169,7 +191,7 @@ export class D1TenantThreadRepository implements TenantThreadRepository {
         this.database.prepare(
           `INSERT INTO portal_tenant_idempotency_receipts (tenant_id, actor_id, operation, key, fingerprint, response_json, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(context.tenantId, context.principalId, CREATE_THREAD_OPERATION, key, fingerprint, JSON.stringify(threadDetail), createdAtSeconds),
+        ).bind(context.tenantId, context.principalId, operation, key, fingerprint, JSON.stringify(threadDetail), createdAtSeconds),
         this.database.prepare(
           `INSERT INTO portal_threads (tenant_id, document_id, thread_id, created_at) VALUES (?, ?, ?, ?)`,
         ).bind(context.tenantId, documentId, threadId, createdAtSeconds),
@@ -179,7 +201,7 @@ export class D1TenantThreadRepository implements TenantThreadRepository {
         ).bind(context.tenantId, documentId, threadId, request.baseVersionIdx, contentJson, locationJson, context.principalId, createdAtSeconds),
       ]);
     } catch (error) {
-      const concurrent = await this.replay(context, CREATE_THREAD_OPERATION, key, fingerprint, ThreadDetailSchema);
+      const concurrent = await this.replay(context, operation, key, fingerprint, ThreadDetailSchema);
       if (concurrent) return concurrent;
       throw error;
     }

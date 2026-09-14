@@ -453,9 +453,15 @@ describe("D1TenantThreadRepository.create / get / appendComment (real D1)", () =
 
   const messageContent = { text: "hi", richContent: null, attachments: [] };
 
-  function createCommand(overrides: { key?: string; fingerprint?: string; baseVersionIdx?: number } = {}) {
+  async function seedDocument(documentId: string) {
+    await db.prepare(
+      "INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).bind("t-local", documentId, "Doc", "markdown", null, 0).run();
+  }
+
+  function createCommand(overrides: { key?: string; fingerprint?: string; baseVersionIdx?: number; documentId?: string } = {}) {
     return {
-      context, documentId: "doc-1",
+      context, documentId: overrides.documentId ?? "doc-1",
       key: overrides.key ?? "key-create-1",
       fingerprint: overrides.fingerprint ?? "fp-create-1",
       request: { baseVersionIdx: overrides.baseVersionIdx ?? 0, content: messageContent, location: null },
@@ -500,6 +506,33 @@ describe("D1TenantThreadRepository.create / get / appendComment (real D1)", () =
     // Also confirm it is the tenant operation error type, not some other rejection shape.
     await expect(repository.create(createCommand({ key: "key-conflict", fingerprint: "fp-c" })))
       .rejects.toBeInstanceOf(TenantOperationError);
+  });
+
+  /**
+   * The service's fingerprint (`schemaHash({ operation: "createThread", body })`
+   * in `packages/portal-service/src/tenant/threads.ts`, which this repository
+   * cannot change) does not include documentId, but the receipt primary key
+   * is (tenant_id, actor_id, operation, key) - so before this fix, the same
+   * key and body sent to two different documents replayed doc-a's thread for
+   * doc-b's caller, who believed they had opened a new thread there.
+   */
+  it("does not replay one document's thread when the same key and body target another document", async () => {
+    await seedDocument("doc-a");
+    await seedDocument("doc-b");
+    const repository = new D1TenantThreadRepository(db);
+    const onA = await repository.create(createCommand({ documentId: "doc-a", key: "shared-key", fingerprint: "shared-fp" }));
+    const onB = await repository.create(createCommand({ documentId: "doc-b", key: "shared-key", fingerprint: "shared-fp" }));
+    expect(onB.threadId).not.toBe(onA.threadId);
+
+    const rows = await db.prepare("SELECT document_id FROM portal_threads ORDER BY document_id").all<{ document_id: string }>();
+    expect(rows.results.map(row => row.document_id)).toEqual(["doc-a", "doc-b"]);
+  });
+
+  it("still replays the same key and body on the same document", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const first = await repository.create(createCommand({ key: "same-doc-key", fingerprint: "same-doc-fp" }));
+    const second = await repository.create(createCommand({ key: "same-doc-key", fingerprint: "same-doc-fp" }));
+    expect(second.threadId).toBe(first.threadId);
   });
 
   it("get returns both append-only sequences, each ascending by index", async () => {
