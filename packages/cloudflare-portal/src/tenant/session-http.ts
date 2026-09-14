@@ -36,8 +36,10 @@ export function createTenantSessionHttp(options: {
   readonly origin: string;
   readonly store: D1TenantSessionStore;
   readonly now: () => number;
+  readonly agentToken?: string;
+  readonly agentTenantId?: string;
 }): (request: Request, requestId: string) => Promise<Response | null> {
-  const { origin, store, now } = options;
+  const { origin, store, now, agentToken, agentTenantId } = options;
 
   return async function handle(request: Request, requestId: string): Promise<Response | null> {
     const { pathname } = new URL(request.url);
@@ -45,7 +47,10 @@ export function createTenantSessionHttp(options: {
     if (pathname === SESSION_PATH) {
       if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
       try {
-        const context = await authenticateTenant(request, { origin, now: now(), store });
+        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken, agentTenantId });
+        // An Agent bearer authenticates the tenant API, but it is not a
+        // browser session: there is no session to describe here.
+        if (context.transport === "bearer") return accessErrorResponse(new TenantAccessError("unauthorized"), requestId);
         return Response.json({ tenantId: context.tenantId, principalId: context.principalId });
       } catch (error) {
         if (!(error instanceof TenantAccessError)) throw error;
@@ -59,8 +64,9 @@ export function createTenantSessionHttp(options: {
         //
         // Of these three, the Authorization check is the load-bearing one.
         // authenticateTenant (session.ts) throws "unauthorized" from two
-        // different places: immediately when an Authorization header is
-        // present (Bearer must never fall back to the cookie), or later, once
+        // different places: from the Agent bearer path (agent-auth.ts) when an
+        // Authorization header is present and its token is rejected (Bearer
+        // must never fall back to the cookie), or later, once
         // the origin/cross-site check has already passed, when the session
         // cookie is missing/invalid. So "unauthorized" alone does not tell
         // you which case you're in - without the Authorization check here, a
@@ -93,7 +99,9 @@ export function createTenantSessionHttp(options: {
     if (pathname === LOGOUT_PATH) {
       if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
       try {
-        const context = await authenticateTenant(request, { origin, now: now(), store });
+        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken, agentTenantId });
+        // Nor is there a session for an Agent bearer to end.
+        if (context.transport === "bearer") return accessErrorResponse(new TenantAccessError("unauthorized"), requestId);
         if (context.sessionHash) await store.revoke(context.sessionHash);
         const headers = new Headers();
         headers.append("Set-Cookie", clearedSessionCookie());

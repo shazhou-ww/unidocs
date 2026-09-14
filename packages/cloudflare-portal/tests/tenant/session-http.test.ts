@@ -6,6 +6,8 @@ import { startRealD1, type RealD1 } from "./real-d1.js";
 const LOCAL = "http://127.0.0.1:8795";
 const PRODUCTION = "https://unidocs.shazhou.work";
 const NOW = 1_757_808_000;
+const AGENT_TOKEN = "agent-local-token-0123456789";
+const agent = { agentToken: AGENT_TOKEN, agentTenantId: "t-local" };
 
 let real: RealD1;
 let store: D1TenantSessionStore;
@@ -113,6 +115,25 @@ describe("GET /portal/auth/session", () => {
     expect(await sessionRows()).toBe(0);
   });
 
+  it("refuses a valid Agent bearer with 401: an Agent is not a browser session", async () => {
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, ...agent });
+    const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
+      headers: { authorization: `Bearer ${AGENT_TOKEN}` },
+    }), "req-1");
+    expect(response?.status).toBe(401);
+    await expect(response?.json()).resolves.toMatchObject({ error: { code: "unauthorized", requestId: "req-1" } });
+    expect(response!.headers.getSetCookie()).toEqual([]);
+    expect(await sessionRows()).toBe(0);
+  });
+
+  it("refuses a valid Agent bearer with 401 on a non-loopback origin too", async () => {
+    const handle = createTenantSessionHttp({ origin: PRODUCTION, store, now: () => NOW, ...agent });
+    const response = await handle(new Request(`${PRODUCTION}/portal/auth/session`, {
+      headers: { authorization: `Bearer ${AGENT_TOKEN}` },
+    }), "req-1");
+    expect(response?.status).toBe(401);
+  });
+
   it("returns null for a path it does not own", async () => {
     const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
     await expect(handle(new Request(`${LOCAL}/api/v1/tenants/t-local/documents`), "req-1")).resolves.toBeNull();
@@ -147,6 +168,18 @@ describe("POST /portal/auth/logout", () => {
       headers: { cookie: `${TENANT_SESSION_COOKIE}=${token}`, origin: LOCAL },
     }), "req-1");
     expect(response?.status).toBe(403);
+    expect(await sessionRows()).toBe(1);
+  });
+
+  it("refuses a valid Agent bearer with 401 and neither revokes nor clears anything", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW);
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, ...agent });
+    const response = await handle(new Request(`${LOCAL}/portal/auth/logout`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${AGENT_TOKEN}`, cookie: `${TENANT_SESSION_COOKIE}=${token}` },
+    }), "req-1");
+    expect(response?.status).toBe(401);
+    expect(response!.headers.getSetCookie()).toEqual([]);
     expect(await sessionRows()).toBe(1);
   });
 });

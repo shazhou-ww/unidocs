@@ -11,6 +11,10 @@ import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const ORIGIN = "http://127.0.0.1:8795";
 const tenant: TenantContext = { tenantId: "t-local", principalId: "user-local", transport: "session", sessionHash: "h" };
+const agent: TenantContext = {
+  tenantId: "t-local", principalId: "agent:markdown-primary", transport: "bearer",
+  scopes: ["documents:read", "comments:read", "comments:reply", "versions:submit"],
+};
 const SNAPSHOT_BYTES = new Uint8Array([0xa1, 0x61, 0x63, 0x60]);
 
 let real: RealD1;
@@ -98,6 +102,24 @@ describe("tenant HTTP reads", () => {
     }), tenant, "req-1");
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "unavailable" } });
+  });
+
+  it("refuses a CAS capability for another tenant with 403 before answering unavailable", async () => {
+    const response = await handle(new Request(`${ORIGIN}/api/v1/tenants/t-other/cas-capabilities`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    }), tenant, "req-1");
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "forbidden" } });
+  });
+
+  it("serves an Agent bearer's reads", async () => {
+    await seedDocumentWithVersion("doc-1");
+    const list = await handle(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`), agent, "req-1");
+    expect(list.status).toBe(200);
+    const body = await list.json() as { items: { documentId: string }[] };
+    expect(body.items.map(item => item.documentId)).toEqual(["doc-1"]);
+    const snapshot = await handle(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents/doc-1/versions/0/snapshot`), agent, "req-1");
+    expect(snapshot.status).toBe(200);
   });
 
   it("does not leak an unexpected error's message", async () => {

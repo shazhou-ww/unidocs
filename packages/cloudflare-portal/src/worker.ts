@@ -81,12 +81,15 @@ async function serveTenant(request: Request, env: Env, path: string): Promise<Re
   let response: Response;
   try {
     const store = new D1TenantSessionStore(env.DB);
-    const session = await createTenantSessionHttp({ origin: env.PORTAL_ORIGIN, store, now })(request, requestId);
+    // Plain string vars: reading them cannot throw, and an unset one simply
+    // refuses every bearer inside authenticateAgent.
+    const agent = { agentToken: env.AGENT_API_TOKEN, agentTenantId: env.AGENT_TENANT_ID };
+    const session = await createTenantSessionHttp({ origin: env.PORTAL_ORIGIN, store, now, ...agent })(request, requestId);
     if (session) {
       response = session;
     } else {
       try {
-        const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store });
+        const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store, ...agent });
         response = await createTenantHttp({
           catalog: new D1TenantCatalogRepository(env.DB),
           documents: new D1TenantDocumentRepository(env.DB),

@@ -11,6 +11,10 @@ import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const ORIGIN = "http://127.0.0.1:8795";
 const tenant: TenantContext = { tenantId: "t-local", principalId: "user-local", transport: "session", sessionHash: "h" };
+const agent: TenantContext = {
+  tenantId: "t-local", principalId: "agent:markdown-primary", transport: "bearer",
+  scopes: ["documents:read", "comments:read", "comments:reply", "versions:submit"],
+};
 
 let real: RealD1;
 let handle: ReturnType<typeof createTenantHttp>;
@@ -80,12 +84,61 @@ async function seedDocumentWithVersion(documentId: string) {
   ).bind(documentId).run();
 }
 
-const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+const post = (path: string, body: unknown, headers: Record<string, string> = {}, caller: TenantContext = tenant) =>
   handle(new Request(`${ORIGIN}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
     body: typeof body === "string" ? body : JSON.stringify(body),
-  }), tenant, "req-1");
+  }), caller, "req-1");
+
+async function count(table: string) {
+  const row = await real.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+// R10: an Agent bearer reads the tenant API and submits; it never takes the
+// browser's write paths. Each body here is one the session caller's tests
+// above accept, so a 403 can only come from the transport.
+describe("tenant HTTP writes refuse an Agent bearer", () => {
+  it("refuses POST documents with 403 and creates nothing", async () => {
+    await enableDocumentType("markdown");
+    const response = await post("/api/v1/tenants/t-local/documents", { documentType: "markdown", name: "Notes" }, { "idempotency-key": "k1" }, agent);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: { code: "forbidden", message: expect.any(String), requestId: "req-1" } });
+    expect(await count("portal_documents")).toBe(0);
+  });
+
+  it("refuses moving the current version with 403", async () => {
+    await seedDocumentWithVersion("doc-1");
+    const response = await post("/api/v1/tenants/t-local/documents/doc-1/current-version", {
+      observedCurrentVersionIdx: 0, targetVersionIdx: 0, reason: "agent",
+    }, {}, agent);
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses creating a thread and appending a comment with 403", async () => {
+    await seedDocumentWithVersion("doc-1");
+    const created = await post("/api/v1/tenants/t-local/documents/doc-1/threads", {
+      baseVersionIdx: 0, content: { text: "first", richContent: null, attachments: [] }, location: null,
+    }, { "idempotency-key": "t1" }, agent);
+    expect(created.status).toBe(403);
+    expect(await count("portal_comments")).toBe(0);
+
+    const thread = await (await post("/api/v1/tenants/t-local/documents/doc-1/threads", {
+      baseVersionIdx: 0, content: { text: "first", richContent: null, attachments: [] }, location: null,
+    }, { "idempotency-key": "t1" })).json() as { threadId: string };
+    const appended = await post(`/api/v1/tenants/t-local/documents/doc-1/threads/${thread.threadId}/comments`, {
+      baseVersionIdx: 0, content: { text: "second", richContent: null, attachments: [] }, location: null,
+    }, { "idempotency-key": "c1" }, agent);
+    expect(appended.status).toBe(403);
+    expect(await count("portal_comments")).toBe(1);
+  });
+
+  it("refuses issuing a CAS capability with 403, not 503", async () => {
+    const response = await post("/api/v1/tenants/t-local/cas-capabilities", {}, {}, agent);
+    expect(response.status).toBe(403);
+  });
+});
 
 describe("tenant HTTP writes", () => {
   it("creates a document with 201 and currentVersionIdx null", async () => {

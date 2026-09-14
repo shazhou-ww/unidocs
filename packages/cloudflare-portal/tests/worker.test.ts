@@ -33,6 +33,8 @@ test("Worker fails closed before touching D1 when Google credentials are absent"
       get CAS_REF_DOMAIN(): never { throw new Error("CAS must not be touched"); },
       get CAS_SIGNING_KID(): never { throw new Error("CAS must not be touched"); },
       get CAS_SIGNING_KEY(): never { throw new Error("CAS must not be touched"); },
+      get AGENT_API_TOKEN(): never { throw new Error("Agent credential must not be touched"); },
+      get AGENT_TENANT_ID(): never { throw new Error("Agent credential must not be touched"); },
     };
     const response = await worker.fetch(new Request("https://unidocs.shazhou.work/admin/auth/login?code=never-log-this"), env);
     expect(response.status).toBe(503);
@@ -72,6 +74,8 @@ test.each(ADMIN_MCP_PATHS)("Worker MCP kill switch runs before Google credential
     get CAS_REF_DOMAIN(): never { throw new Error("Unexpected CAS access"); },
     get CAS_SIGNING_KID(): never { throw new Error("Unexpected CAS access"); },
     get CAS_SIGNING_KEY(): never { throw new Error("Unexpected CAS access"); },
+    get AGENT_API_TOKEN(): never { throw new Error("Unexpected Agent credential access"); },
+    get AGENT_TENANT_ID(): never { throw new Error("Unexpected Agent credential access"); },
   };
   const response = await worker.fetch(new Request("https://unidocs.shazhou.work" + path), env);
   expect(response.status).toBe(404);
@@ -210,6 +214,35 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
     const snapshot = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents/doc-missing/versions/0/snapshot`, { headers: { cookie: pair } }), env);
     expect(snapshot.status).toBe(404);
     expect(snapshot.headers.get("X-Request-ID")).toMatch(/\S/);
+  });
+
+  it("authenticates the Agent bearer from AGENT_API_TOKEN and AGENT_TENANT_ID", async () => {
+    const env = Object.defineProperties(tenantEnv(real.db), {
+      AGENT_API_TOKEN: { value: "agent-local-token-0123456789" },
+      AGENT_TENANT_ID: { value: "t-local" },
+    });
+    const authorization = "Bearer agent-local-token-0123456789";
+    const list = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, { headers: { authorization } }), env);
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toEqual({ items: [], nextCursor: null });
+
+    const create = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, {
+      method: "POST", headers: { authorization, "content-type": "application/json", "idempotency-key": "k1" },
+      body: JSON.stringify({ documentType: "markdown", name: "Notes" }),
+    }), env);
+    expect(create.status).toBe(403);
+
+    const wrong = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, { headers: { authorization: `${authorization}x` } }), env);
+    expect(wrong.status).toBe(401);
+
+    const session = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`, { headers: { authorization } }), env);
+    expect(session.status).toBe(401);
+  });
+
+  it("refuses any bearer when the Agent credential is not configured", async () => {
+    const env = tenantEnv(real.db);
+    const list = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, { headers: { authorization: "Bearer " } }), env);
+    expect(list.status).toBe(401);
   });
 
   it("answers an unexpected failure as a tenant error, without leaking its message", async () => {

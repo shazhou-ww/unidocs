@@ -4,7 +4,7 @@ import { experimental_ZodSmartCoercionPlugin } from "@orpc/zod/zod4";
 import { tenantApiContract } from "@unidocs/protocol-tenant-portal";
 import {
   createTenantCatalogService, createTenantDocumentService, createTenantThreadService, createTenantVersionService,
-  TenantAccessError, TenantOperationError,
+  requireTenantScope, TenantAccessError, TenantOperationError,
   type DocumentLocationValidator, type TenantCatalogRepository, type TenantContext, type TenantDocumentRepository,
   type TenantThreadRepository, type TenantVersionRepository,
 } from "@unidocs/portal-service";
@@ -49,6 +49,15 @@ const STATUS = {
   idempotency_conflict: 409, content_unavailable: 409, unavailable: 503,
 } as const;
 
+/**
+ * R10: an Agent bearer reads the tenant API and submits through the Agent API;
+ * the browser's write operations are not in its grant. Checked before the
+ * service runs, so a bearer write has no effect even when it would succeed.
+ */
+function forbidBearerWrite(tenant: TenantContext): void {
+  if (tenant.transport === "bearer") throw new TenantAccessError("forbidden");
+}
+
 export function createTenantHttp(dependencies: TenantHttpDependencies):
   (request: Request, tenant: TenantContext, requestId: string) => Promise<Response> {
   const implementation = implement(tenantApiContract).$context<TenantHttpContext>();
@@ -67,12 +76,16 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
     documents: {
       list: implementation.documents.list.handler(({ input, context }) =>
         documents.list(context.tenant, input.params.tenantId, input.query ?? {})),
-      create: implementation.documents.create.handler(({ input, context }) =>
-        documents.create(context.tenant, input.params.tenantId, input.body, input.headers["idempotency-key"], context.requestId)),
+      create: implementation.documents.create.handler(({ input, context }) => {
+        forbidBearerWrite(context.tenant);
+        return documents.create(context.tenant, input.params.tenantId, input.body, input.headers["idempotency-key"], context.requestId);
+      }),
       get: implementation.documents.get.handler(({ input, context }) =>
         documents.get(context.tenant, input.params.tenantId, input.params.documentId)),
-      moveCurrentVersion: implementation.documents.moveCurrentVersion.handler(({ input, context }) =>
-        documents.moveCurrentVersion(context.tenant, input.params.tenantId, input.params.documentId, input.body, context.requestId)),
+      moveCurrentVersion: implementation.documents.moveCurrentVersion.handler(({ input, context }) => {
+        forbidBearerWrite(context.tenant);
+        return documents.moveCurrentVersion(context.tenant, input.params.tenantId, input.params.documentId, input.body, context.requestId);
+      }),
       listAudit: implementation.documents.listAudit.handler(({ input, context }) =>
         documents.listAuditEvents(context.tenant, input.params.tenantId, input.params.documentId, input.query ?? {})),
     },
@@ -90,18 +103,27 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
     threads: {
       list: implementation.threads.list.handler(({ input, context }) =>
         threads.list(context.tenant, input.params.tenantId, input.params.documentId, input.query ?? {})),
-      create: implementation.threads.create.handler(({ input, context }) =>
-        threads.create(context.tenant, input.params.tenantId, input.params.documentId, input.body, input.headers["idempotency-key"])),
+      create: implementation.threads.create.handler(({ input, context }) => {
+        forbidBearerWrite(context.tenant);
+        return threads.create(context.tenant, input.params.tenantId, input.params.documentId, input.body, input.headers["idempotency-key"]);
+      }),
       get: implementation.threads.get.handler(({ input, context }) =>
         threads.get(context.tenant, input.params.tenantId, input.params.documentId, input.params.threadId)),
-      appendComment: implementation.threads.appendComment.handler(({ input, context }) =>
-        threads.appendComment(context.tenant, input.params.tenantId, input.params.documentId, input.params.threadId, input.body, input.headers["idempotency-key"])),
+      appendComment: implementation.threads.appendComment.handler(({ input, context }) => {
+        forbidBearerWrite(context.tenant);
+        return threads.appendComment(context.tenant, input.params.tenantId, input.params.documentId, input.params.threadId, input.body, input.headers["idempotency-key"]);
+      }),
     },
     cas: {
       // v0 does not issue direct-UniCAS capabilities (spec §1.3: browser-direct
       // UniCAS is deferred). Answer 503 rather than a fake grant or a 404, so a
-      // caller can tell "not yet" from "no such operation".
-      issueCapability: implementation.cas.issueCapability.handler(() => { throw new TenantOperationError("unavailable"); }),
+      // caller can tell "not yet" from "no such operation". Authorization still
+      // comes first, so "not yet" is never said to a caller who may not ask.
+      issueCapability: implementation.cas.issueCapability.handler(({ input, context }) => {
+        forbidBearerWrite(context.tenant);
+        requireTenantScope(context.tenant, input.params.tenantId);
+        throw new TenantOperationError("unavailable");
+      }),
     },
   });
 

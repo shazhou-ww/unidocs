@@ -11,6 +11,7 @@ import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const ORIGIN = "http://127.0.0.1:8795";
 const NOW = 1_757_808_000;
+const AGENT_TOKEN = "agent-local-token-0123456789";
 
 let real: RealD1;
 let store: D1TenantSessionStore;
@@ -58,10 +59,25 @@ describe("D1TenantSessionStore", () => {
     await store.revoke(hash);
     expect(await store.find(hash, NOW)).toBeNull();
   });
+
+  it("does not find a session created after now", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW + 60);
+    const { hashSessionSecret } = await import("../../src/auth.js");
+    const hash = await hashSessionSecret(token);
+    expect(await store.find(hash, NOW)).toBeNull();
+    expect(await store.find(hash, NOW + 60)).not.toBeNull();
+  });
+
+  it.each([1.5, -1, Number.MAX_SAFE_INTEGER + 1])("refuses to issue with the clock %s", async now => {
+    await expect(store.issue("t-local", "user-local", now)).rejects.toBeInstanceOf(TypeError);
+    const row = await real.db.prepare("SELECT COUNT(*) AS n FROM portal_tenant_sessions").first<{ n: number }>();
+    expect(row?.n).toBe(0);
+  });
 });
 
 describe("authenticateTenant", () => {
   const auth = (req: Request) => authenticateTenant(req, { origin: ORIGIN, now: NOW, store });
+  const agentAuth = (req: Request) => authenticateTenant(req, { origin: ORIGIN, now: NOW, store, agentToken: AGENT_TOKEN, agentTenantId: "t-agent" });
 
   it("resolves a valid session on a read", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
@@ -77,6 +93,49 @@ describe("authenticateTenant", () => {
   it("does not fall back to a valid cookie when an Authorization header is present", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
     await expect(auth(request({ token, authorization: "Bearer abc.def.ghi" }))).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("does not fall back to a valid cookie when the Agent bearer token is wrong", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW);
+    await expect(agentAuth(request({ token, authorization: `Bearer ${AGENT_TOKEN}x` }))).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("does not fall back to a valid cookie when no Agent token is configured", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW);
+    const unconfigured = authenticateTenant(request({ token, authorization: `Bearer ${AGENT_TOKEN}` }), {
+      origin: ORIGIN, now: NOW, store, agentToken: undefined, agentTenantId: "t-agent",
+    });
+    await expect(unconfigured).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("resolves the Agent bearer token to a bearer context without reading the cookie or the session store", async () => {
+    const untouched = { find: async () => { throw new Error("session store must not be read"); } } as unknown as D1TenantSessionStore;
+    const context = await authenticateTenant(request({ token: "not-even-a-valid-cookie", authorization: `Bearer ${AGENT_TOKEN}` }), {
+      origin: ORIGIN, now: NOW, store: untouched, agentToken: AGENT_TOKEN, agentTenantId: "t-agent",
+    });
+    expect(context).toEqual({
+      tenantId: "t-agent",
+      principalId: "agent:markdown-primary",
+      transport: "bearer",
+      scopes: ["documents:read", "comments:read", "comments:reply", "versions:submit"],
+    });
+  });
+
+  it("accepts an Agent bearer mutation with no Origin or CSRF token", async () => {
+    await expect(agentAuth(request({ method: "POST", authorization: `Bearer ${AGENT_TOKEN}` }))).resolves.toMatchObject({ transport: "bearer" });
+  });
+
+  it("does not resolve a session whose created_at is in the future", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW + 60);
+    await expect(auth(request({ token }))).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it.each([1.5, -1, Number.MAX_SAFE_INTEGER + 1])("throws TypeError for the clock %s", async now => {
+    const { token } = await store.issue("t-local", "user-local", NOW);
+    await expect(authenticateTenant(request({ token }), { origin: ORIGIN, now, store })).rejects.toBeInstanceOf(TypeError);
+    await expect(authenticateTenant(request({ authorization: `Bearer ${AGENT_TOKEN}` }), {
+      origin: ORIGIN, now, store, agentToken: AGENT_TOKEN, agentTenantId: "t-agent",
+    })).rejects.toBeInstanceOf(TypeError);
   });
 
   it("refuses a cross-site request even with a valid session", async () => {

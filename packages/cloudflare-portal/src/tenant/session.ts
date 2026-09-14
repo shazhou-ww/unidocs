@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { D1Database } from "@cloudflare/workers-types";
 import { TenantAccessError, type TenantContext } from "@unidocs/portal-service";
 import { hashSessionSecret } from "../auth.js";
+import { authenticateAgent } from "./agent-auth.js";
 
 export const TENANT_SESSION_COOKIE = "__Host-unidocs_tenant";
 export const TENANT_CSRF_COOKIE = "__Host-unidocs_tenant_csrf";
@@ -27,6 +28,14 @@ function base64url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
+/**
+ * D1 stores seconds. A fractional, negative or unsafe clock is a caller bug,
+ * not a request to refuse, so it throws TypeError like auth.ts's clock guard.
+ */
+function requireClock(now: number): void {
+  if (!Number.isSafeInteger(now) || now < 0) throw new TypeError("Invalid tenant session clock");
+}
+
 interface TenantSessionRow {
   readonly session_hash: string;
   readonly tenant_id: string;
@@ -40,6 +49,7 @@ export class D1TenantSessionStore {
   constructor(private readonly db: D1Database) {}
 
   async issue(tenantId: string, principalId: string, now: number): Promise<{ token: string; csrfToken: string }> {
+    requireClock(now);
     const token = base64url(crypto.getRandomValues(new Uint8Array(32)));
     const csrfToken = base64url(crypto.getRandomValues(new Uint8Array(32)));
     const sessionHash = await hashSessionSecret(token);
@@ -56,8 +66,8 @@ export class D1TenantSessionStore {
 
   async find(sessionHash: string, now: number): Promise<TenantSessionRecord | null> {
     const row = await this.db
-      .prepare("SELECT * FROM portal_tenant_sessions WHERE session_hash = ? AND expires_at > ?")
-      .bind(sessionHash, now)
+      .prepare("SELECT * FROM portal_tenant_sessions WHERE session_hash = ? AND created_at <= ? AND expires_at > ?")
+      .bind(sessionHash, now, now)
       .first<TenantSessionRow>();
     if (!row) return null;
     return {
@@ -85,14 +95,23 @@ function sessionTokenFromCookie(cookie: string | null): string {
 
 export async function authenticateTenant(
   request: Request,
-  options: { readonly origin: string; readonly now: number; readonly store: D1TenantSessionStore },
+  options: {
+    readonly origin: string;
+    readonly now: number;
+    readonly store: D1TenantSessionStore;
+    /** AGENT_API_TOKEN and AGENT_TENANT_ID; either one unset refuses every bearer. */
+    readonly agentToken?: string;
+    readonly agentTenantId?: string;
+  },
 ): Promise<TenantContext> {
   const { origin, now, store } = options;
+  requireClock(now);
 
-  // An Authorization header is refused outright, even beside a valid cookie:
-  // Bearer verification for Agent credentials is Plan 4's job, and the
-  // contract says a rejected bearer never falls back to the cookie.
-  if (request.headers.get("authorization") !== null) throw new TenantAccessError("unauthorized");
+  // Any Authorization header takes the Agent bearer path, and its verdict is
+  // final: a rejected bearer never falls back to the cookie, even a valid one.
+  if (request.headers.get("authorization") !== null) {
+    return authenticateAgent(request, { origin, token: options.agentToken, tenantId: options.agentTenantId });
+  }
 
   if (new URL(request.url).origin !== origin || request.headers.get("sec-fetch-site") === "cross-site") {
     throw new TenantAccessError("forbidden");
