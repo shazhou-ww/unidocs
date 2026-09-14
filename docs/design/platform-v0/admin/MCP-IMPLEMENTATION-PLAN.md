@@ -1,6 +1,6 @@
 # UniDocs Admin Portal MCP 实现计划
 
-状态：27 个 tools 均已实现，content、publish 与 security mutation canary 已完成生产验收；移除现有 bound 管理员后的 grant 即时失效仍待受控演练
+状态：27 个 tools、OAuth refresh/revoke、content/publish/security mutation canary 与移除 bound 管理员后 grant 即时失效均已完成生产验收
 
 日期：2026-09-12  
 范围：为已上线的 26-operation Admin Portal 增加 OAuth 2.1 保护的 remote MCP；不改变 Tenant/Document 数据面，不把 UniCAS 作为运行时依赖。
@@ -457,6 +457,10 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 - Security canary 已随生产版本 `b4a44161-dd20-4878-833e-e51766c65f8b` 开启，三个 mutation switches 均为 true；protected-resource metadata 与无凭据 challenge 已确认广告全部四个 scopes。旧 grant 未自动扩权，`whoami` 仍只有 read/content/publish，当前聊天仍是 25-tool catalog。需由用户重新 consent 并在新聊天加载 27-tool catalog 后，使用唯一未绑定 canary 邮箱验证 add/remove replay、双确认、self-removal 拒绝与 audit；不移除现有另一名 bound 管理员。
 - 重新 consent 后 `whoami` 返回全部四个 scopes，27-tool catalog 已加载。使用保留域唯一邮箱创建未绑定 canary 管理员，同 key replay 返回相同 adminId/ETag；错误邮箱确认返回 `invalid_request` 且资源保持不变。正确双确认删除后，同 key/旧 ETag 在资源已不可查询时仍成功 replay，证明 receipt-first 顺序生效。
 - add/remove 各恰好产生一条归因完整的 MCP audit；失败确认、replay 与 self-removal 拒绝均未增加 audit。使用当前管理员的真实 ETag 与双确认执行 self-removal，稳定返回 `cannot_remove_self`，随后 `whoami` 与管理员列表确认当前 grant 和原两名 bound 管理员均未受影响。未移除另一名真实 bound 管理员，因此“移除成员后其现有 grant 立即失效”的生产演练仍未完成；成员重查和移除/重新邀请语义已有真实 D1/workerd 集成覆盖。
+- 2026-09-14 将专用第二账号加入 MCP canary allowlist，生产版本 `0df7a0b0-7a9e-4c43-92e3-79a889e250ee` 上线后确认 Admin 登录入口、四 scope `/mcp` challenge、resource/authorization metadata、S256 与未知 OAuth path 404 均正常。第二账号随后在 VS Code 完成 OAuth；撤销前同一连接的 `whoami` 返回该账号、全部四个 scope 与 active member，`list_administrators` 正常返回并标记 self。主管理员移除该成员后，同一 MCP 连接的后续 tool call 不再返回业务数据，重新授权页面显示“没有管理员权限”；production D1 同时确认该 member 于 `2026-09-14 02:23:32 UTC` 变为 `active=0`。受控的“移除成员后现有 grant 下一次调用即时失效”生产演练通过。
+- Admin WebUI 已增加“连接 AI 工具”对话框，按当前 origin 显示 remote MCP URL 和可复制的 VS Code `mcp.json` 配置；生产版本 `1aaa7f38-d248-427d-9bd3-2e93f1fd102e` 已上线。组件测试 18 项和包级 typecheck 通过；桌面 `1440x900` 与移动 `390x844` 浏览器检查确认无横向溢出。
+- GitHub Copilot production refresh 真人验收通过：主管理员于 `2026-09-14 02:45:24 UTC` 重新授权后，等待 15 分钟 access token 到期；`2026-09-14 03:05:24 UTC` 的下一次 `whoami` 未打开浏览器或再次 consent，仍返回相同 member、OAuth client handle 与全部四个 scope。production D1 的 refresh consumption 从 4 增至 5，authorization-code consumption 保持 6，证明宿主使用 refresh token 完成轮换而非重新授权。
+- RFC 7009 production revoke 真人验收通过：不打印、不落盘 token 的 loopback 浏览器辅助探针以临时 public client 和 `admin:read` 完成第一次授权、`whoami`、refresh 轮换和 `/oauth/admin-mcp/revoke`；随后确认同一 grant 的 access token 返回 401、refresh token 返回 `invalid_grant`，第二次真人授权恢复 `whoami`，最后立即 revoke 临时 grant。production D1 的 refresh consumption 从 5 增至 6、authorization-code consumption 从 6 增至 8，时间与两次授权及一次轮换吻合。当前 VS Code 不提供原生 MCP revoke 命令，因此该探针保留为生产验收与事件响应工具。演练后已将第二账号移出 MCP canary allowlist，最终生产版本 `7c31e8e9-5c78-44b3-bbaa-9f3e04ed5821` 仅保留主管理员；公开 OAuth/MCP smoke 与主管理员 `whoami` 回归通过。
 
 退出条件：没有未决项会改变 OAuth audience、scope 名、audit schema 或 tool 名。
 
@@ -472,8 +476,9 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 - [x] 将 OAuth provider 与 read-only tool handler 接入 Worker；
 - [x] 实现 `whoami` 与 14 个 read tools；
 - [x] mutation tools 不注册，三个 mutation kill switch 保持关闭；
-- [ ] WebUI 增加“连接 AI 工具”对话框，显示 remote MCP URL 和 VS Code 配置；
-- [ ] 用 GitHub Copilot 实测 refresh、revoke（authorize、tools/list、whoami、list/get 已通过）。
+- [x] WebUI 增加“连接 AI 工具”对话框，显示 remote MCP URL 和 VS Code 配置；
+- [x] 用 GitHub Copilot 实测 refresh（authorize、tools/list、whoami、list/get 同样已通过）；
+- [x] 用不打印、不落盘 token 的浏览器辅助探针实测 RFC 7009 revoke、拒绝与重新授权；当前 VS Code 构建没有 MCP revoke 命令，不能用 stop/reset trust/reset cache 替代。
 
 退出条件：仅 allowlist 管理员可授权；删除成员后现有 token 立即无法调用；read tool 不泄漏 Admin cookie/Google token。
 
@@ -496,9 +501,9 @@ MCP email allowlist 只作为 canary 附加门禁；每次请求仍以 D1 issuer
 - [x] 接入 add/remove administrator；
 - [x] 双确认、不可自删、最后管理员保护继续由 service/repository 强制；
 - [x] 单独开启 `MCP_SECURITY_MUTATIONS_ENABLED`；
-- [ ] 实测移除成员即时使其 MCP grant 不可用。
+- [x] 实测移除成员即时使其 MCP grant 不可用。
 
-### Phase 5：发布门禁与运维
+### Phase 5：上线后运维增强（不阻塞当前验收）
 
 - [ ] OAuth KV client/grant 保留与 90 天 inactive cleanup；
 - [ ] grant/client revoke 运维流程与 MCP 全局 kill switch 演练；

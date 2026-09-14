@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
-import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, ExternalLink, FileText, Languages, LayoutTemplate, LoaderCircle, LogIn, LogOut, Menu, Pencil, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UploadCloud, UserPlus, Users, X } from "lucide-react";
+import { AlertCircle, BookOpenText, Cable, Check, ChevronRight, CircleDashed, Copy, ExternalLink, FileText, Languages, LayoutTemplate, LoaderCircle, LogIn, LogOut, Menu, Pencil, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UploadCloud, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
 import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type OperatorListItem, type OperatorRecord, type OperatorValidation, type TypeCardBundleListItem, type TypeCardBundleRecord, type ViewBundleListItem, type ViewBundleRecord } from "@unidocs/protocol-admin-portal";
 
@@ -85,6 +85,14 @@ export function adminRoutePath(route: AdminRoute): string {
   if (route.view === "audit") return "/admin/audit";
   if (route.documentType) return `/admin/document-types/${encodeURIComponent(route.documentType)}?tab=${route.tab ?? "config"}`;
   return "/admin/document-types";
+}
+
+export function adminMcpConnectionDetails(origin = window.location.origin) {
+  const url = new URL("/mcp", origin).href;
+  return {
+    url,
+    vscodeConfiguration: JSON.stringify({ servers: { "unidocs-admin": { type: "http", url } } }, null, 2),
+  };
 }
 
 function errorMessage(error: unknown): string {
@@ -237,7 +245,7 @@ function AdminApp() {
   const [operatorValidationLoading, setOperatorValidationLoading] = useState(false);
   const [operatorValidationError, setOperatorValidationError] = useState<string | null>(null);
   const [addOperatorOpen, setAddOperatorOpen] = useState(false);
-    const [operators, setOperators] = useState<readonly OperatorListItem[]>([]);
+  const [operators, setOperators] = useState<readonly OperatorListItem[]>([]);
   const [operatorCursor, setOperatorCursor] = useState<string | null>(null);
   const [selectedOperator, setSelectedOperator] = useState<OperatorRecord | null>(null);
   const [operatorName, setOperatorName] = useState("Markdown Operator");
@@ -265,6 +273,10 @@ function AdminApp() {
   const [selectedChange, setSelectedChange] = useState<AdminAuditEvent | null>(null);
   const [changesLoading, setChangesLoading] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
+  const [mcpCopied, setMcpCopied] = useState<"url" | "vscode" | null>(null);
+  const [mcpCopyError, setMcpCopyError] = useState(false);
+  const mcpConnection = adminMcpConnectionDetails();
 
   async function loadTypes(nextQuery = query, nextEnabled = enabled) {
     setLoading(true);
@@ -688,6 +700,22 @@ function AdminApp() {
     await logoutToLogin(() => client.logout());
   }
 
+  function closeMcpDialog() {
+    setMcpOpen(false);
+    setMcpCopied(null);
+    setMcpCopyError(false);
+  }
+
+  async function copyMcpValue(value: string, target: "url" | "vscode") {
+    try {
+      await navigator.clipboard.writeText(value);
+      setMcpCopied(target);
+      setMcpCopyError(false);
+    } catch {
+      setMcpCopyError(true);
+    }
+  }
+
   function submitSearch(event: FormEvent) {
     event.preventDefault();
     void loadTypes();
@@ -703,7 +731,10 @@ function AdminApp() {
     <div className="account">
       <div className="avatar" aria-hidden="true">{session?.email.slice(0, 1).toUpperCase() || "U"}</div>
       <div><strong>{session?.email || "正在读取账户"}</strong><small>Administrator</small></div>
-      <button className="icon-button" type="button" onClick={() => void logout()} title="退出登录" aria-label="退出登录"><LogOut size={17} /></button>
+      <div className="account-actions">
+        <button className="icon-button" type="button" onClick={() => setMcpOpen(true)} title="连接 AI 工具" aria-label="连接 AI 工具"><Cable size={17} /></button>
+        <button className="icon-button" type="button" onClick={() => void logout()} title="退出登录" aria-label="退出登录"><LogOut size={17} /></button>
+      </div>
     </div>
   </>;
 
@@ -732,7 +763,7 @@ function AdminApp() {
             <div className="type-config-head"><div><button className="back-link" type="button" onClick={() => navigate({ view: "documentTypes" })}>文档类型</button><h2>{selected.internalName}</h2><code>{selected.documentType}</code></div><span className={`status ${selected.enabled ? "enabled" : "draft"}`}>{selected.enabled ? "已启用" : "草稿"}</span></div>
             <div className="type-tabs" role="tablist" aria-label="文档类型配置">{([
               ["config", "基本信息"], ["contracts", `文档契约 ${contracts.length || selected.latestDocumentContract ? (selected.latestDocumentContract?.documentContractIdx ?? -1) + 1 : 0}`],
-                ["cards", "类型卡片包"], ["bundles", "界面包"], ["operators", `处理服务 ${operators.length}`], ["changes", "变更记录"],
+              ["cards", "类型卡片包"], ["bundles", "界面包"], ["operators", `处理服务 ${operators.length}`], ["changes", "变更记录"],
             ] as const).map(([tab, label]) => <button key={tab} role="tab" aria-selected={activeTypeTab === tab} className={activeTypeTab === tab ? "active" : ""} type="button" onClick={() => changeTypeTab(tab)}>{label}</button>)}</div>
             <div className="type-config-body">
               <div className="type-config-main">
@@ -870,6 +901,16 @@ function AdminApp() {
 
     <button className="mobile-menu-button" type="button" onClick={() => setMobileNav(true)} aria-label="打开导航"><Menu size={20} /></button>
     {mobileNav && <div className="mobile-nav-layer" onClick={() => setMobileNav(false)}><aside onClick={event => event.stopPropagation()}><button className="mobile-close icon-button" type="button" onClick={() => setMobileNav(false)} aria-label="关闭导航"><X size={18} /></button>{navigation}</aside></div>}
+
+    {mcpOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeMcpDialog(); }}>
+      <section className="modal mcp-modal" role="dialog" aria-modal="true" aria-labelledby="mcp-title"><div className="modal-header"><div><span>REMOTE MCP</span><h2 id="mcp-title">连接 AI 工具</h2></div><button className="icon-button" type="button" onClick={closeMcpDialog} aria-label="关闭"><X size={18} /></button></div>
+        <div className="mcp-content">
+          <div className="mcp-field"><div><strong>Remote MCP URL</strong><button className="icon-button bordered" type="button" onClick={() => void copyMcpValue(mcpConnection.url, "url")} title="复制 MCP URL" aria-label="复制 MCP URL">{mcpCopied === "url" ? <Check size={16} /> : <Copy size={16} />}</button></div><code>{mcpConnection.url}</code></div>
+          <div className="mcp-field"><div><strong>VS Code 配置</strong><button className="icon-button bordered" type="button" onClick={() => void copyMcpValue(mcpConnection.vscodeConfiguration, "vscode")} title="复制 VS Code 配置" aria-label="复制 VS Code 配置">{mcpCopied === "vscode" ? <Check size={16} /> : <Copy size={16} />}</button></div><pre>{mcpConnection.vscodeConfiguration}</pre></div>
+          {mcpCopyError && <p className="mcp-copy-error" role="alert">无法写入剪贴板，请手动选择并复制。</p>}
+        </div>
+      </section>
+    </div>}
 
     {createOpen && <div className="modal-layer" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setCreateOpen(false); }}>
       <section className="modal" role="dialog" aria-modal="true" aria-labelledby="create-title"><div className="modal-header"><div><span>NEW DOCUMENT TYPE</span><h2 id="create-title">新建文档类型</h2></div><button className="icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label="关闭"><X size={18} /></button></div>

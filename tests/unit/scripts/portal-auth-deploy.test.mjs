@@ -21,7 +21,7 @@ describe("Portal auth deployment preparation", () => {
     expect(config.secrets.required).toContain("GATEWAY_OIDC_CLIENT_SECRET");
     expect(config.secrets.required).toContain("OAUTH_STATE_ENCRYPTION_KEY");
     expect(config.vars.MCP_ENABLED).toBe("true");
-    expect(config.vars.MCP_ADMIN_EMAIL_ALLOWLIST).toBe("shazhou.ww@gmail.com,neko.shazhou.ww@gmail.com");
+    expect(config.vars.MCP_ADMIN_EMAIL_ALLOWLIST).toBe("shazhou.ww@gmail.com");
     expect(config.vars).toMatchObject({
       MCP_CONTENT_MUTATIONS_ENABLED: "true",
       MCP_PUBLISH_MUTATIONS_ENABLED: "true",

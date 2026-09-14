@@ -48,7 +48,7 @@
   "vars": {
     "MCP_ENABLED": "true",
     "MCP_PUBLIC_ORIGIN": "https://unidocs.shazhou.work",
-    "MCP_ADMIN_EMAIL_ALLOWLIST": "shazhou.ww@gmail.com,neko.shazhou.ww@gmail.com",
+    "MCP_ADMIN_EMAIL_ALLOWLIST": "shazhou.ww@gmail.com",
     "MCP_CONTENT_MUTATIONS_ENABLED": "true",
     "MCP_PUBLISH_MUTATIONS_ENABLED": "true",
     "MCP_SECURITY_MUTATIONS_ENABLED": "true",

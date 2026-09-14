@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, test, vi } from "vitest";
 import { AdminPortalClientError } from "@unidocs/admin-portal-client";
-import { adminRoutePath, App, logoutToLogin, parseAdminRoute, returnToAppWhenAuthenticated, sessionInvalidPath } from "../src/app.js";
+import { adminMcpConnectionDetails, adminRoutePath, App, logoutToLogin, parseAdminRoute, returnToAppWhenAuthenticated, sessionInvalidPath } from "../src/app.js";
 
 beforeEach(() => {
   window.history.replaceState({}, "", "/");
@@ -14,6 +14,30 @@ test("parses and builds stable Admin routes", () => {
   expect(parseAdminRoute("https://portal.test/admin/document-types/markdown?tab=contracts")).toEqual({ view: "documentTypes", documentType: "markdown", tab: "contracts" });
   expect(parseAdminRoute("https://portal.test/admin/document-types/markdown?tab=invalid")).toEqual({ view: "documentTypes", documentType: "markdown", tab: "config" });
   expect(adminRoutePath({ view: "documentTypes", documentType: "markdown", tab: "contracts" })).toBe("/admin/document-types/markdown?tab=contracts");
+});
+
+test("opens and copies same-origin remote MCP connection details", async () => {
+  const fetchMock = vi.fn<typeof fetch>(async input => {
+    if (String(input).endsWith("/admin/auth/session")) return Response.json({ memberId: "admin", email: "admin@example.com", authenticatedAt: null, loginConfirmedAt: 1, loginConfirmation: "authorization-code-v1", transport: "session" });
+    return Response.json({ items: [], nextCursor: null });
+  });
+  const copyMock = vi.fn<(value: string) => Promise<void>>().mockResolvedValue();
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copyMock } });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  await screen.findByText("admin@example.com");
+
+  fireEvent.click(screen.getByRole("button", { name: "连接 AI 工具" }));
+  const dialog = screen.getByRole("dialog", { name: "连接 AI 工具" });
+  const details = adminMcpConnectionDetails();
+  expect(dialog).toHaveTextContent(details.url);
+  expect(dialog).toHaveTextContent("unidocs-admin");
+
+  fireEvent.click(screen.getByRole("button", { name: "复制 MCP URL" }));
+  await waitFor(() => expect(copyMock).toHaveBeenCalledWith(details.url));
+  fireEvent.click(screen.getByRole("button", { name: "复制 VS Code 配置" }));
+  await waitFor(() => expect(copyMock).toHaveBeenCalledWith(details.vscodeConfiguration));
+  vi.unstubAllGlobals();
 });
 
 test("loads the signed-in administrator and real empty document type state", async () => {
