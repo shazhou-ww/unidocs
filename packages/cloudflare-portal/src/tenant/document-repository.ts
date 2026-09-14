@@ -47,6 +47,25 @@ interface AuditRow {
 const CREATE_OPERATION = "createDocument";
 
 /**
+ * `TenantOperationError` (`packages/portal-service/src/tenant/access.ts`,
+ * out of scope for this plan) carries only a `code` - no `data`/`details`
+ * field. This subclass does not change that class's shape at all: it stays
+ * `instanceof TenantOperationError` with `.code === "version_conflict"`
+ * exactly as before, it only adds a `currentVersionIdx` field alongside it,
+ * so a refused `moveCurrentVersion` can carry the value
+ * `moveCurrentVersionContract`'s description promises ("409 with the
+ * current value in error details") out of the repository without waiting
+ * on Plan 3's HTTP layer to exist. Nothing downstream reads this field yet
+ * - the HTTP layer that would map it into the response body is Plan 3's,
+ * not this one's - but the repository can supply it now.
+ */
+export class VersionConflictError extends TenantOperationError {
+  constructor(readonly currentVersionIdx: number | null) {
+    super("version_conflict");
+  }
+}
+
+/**
  * Persists tenant documents in `portal_documents`, alongside their creation
  * audit event, current-pointer moves, and idempotency receipt.
  */
@@ -200,7 +219,10 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
    * exists (deleted, or never existed), the contract instead declares
    * `not_found`, and nothing else in this method has done the read needed to
    * tell the two apart, so a refusal now takes one extra read to decide
-   * which.
+   * which. That same read's `currentVersionIdx` is threaded into
+   * `VersionConflictError` on the version_conflict path, so the value the
+   * contract's description promises ("409 with the current value in error
+   * details") does not just vanish at this layer.
    */
   async moveCurrentVersion(command: CurrentVersionMoveCommand): Promise<DocumentRecord> {
     const { context, documentId, observedCurrentVersionIdx, targetVersionIdx, audit } = command;
@@ -237,7 +259,8 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
     const updateResult = results[1];
     if (!updateResult || updateResult.meta.changes === 0) {
       const document = await this.get(context, documentId);
-      throw new TenantOperationError(document ? "version_conflict" : "not_found");
+      if (!document) throw new TenantOperationError("not_found");
+      throw new VersionConflictError(document.currentVersionIdx);
     }
 
     const updated = await this.get(context, documentId);

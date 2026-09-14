@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
 import { TenantOperationError } from "@unidocs/portal-service";
-import { D1TenantDocumentRepository } from "../../src/tenant/document-repository.js";
+import { D1TenantDocumentRepository, VersionConflictError } from "../../src/tenant/document-repository.js";
 import { databaseDouble } from "./d1-double.js";
 
 const context = { tenantId: "t-local", principalId: "user-1", transport: "session" as const };
@@ -255,6 +255,12 @@ describe("D1TenantDocumentRepository.moveCurrentVersion", () => {
     // not_found from version_conflict, per A2) - the two batched statements
     // plus that one SELECT, and nothing more.
     expect(database.statements).toHaveLength(3);
+    // The re-read's currentVersionIdx is carried outward on VersionConflictError
+    // (a subclass that changes nothing about TenantOperationError's own shape),
+    // rather than being dropped at this layer - moveCurrentVersionContract's
+    // description promises "409 with the current value in error details".
+    expect(error).toBeInstanceOf(VersionConflictError);
+    expect((error as VersionConflictError).currentVersionIdx).toBe(5);
   });
 
   it("reports not_found instead of version_conflict when a refused move's document no longer exists", async () => {
@@ -515,15 +521,23 @@ describe("D1TenantDocumentRepository.moveCurrentVersion (real D1)", () => {
     expect(error).toBeInstanceOf(TenantOperationError);
     expect(error).toMatchObject({ code: "version_conflict" });
     expect(await auditRows("doc-1")).toHaveLength(0);
+    // The document's actual pointer (4 - never moved by this failed call) is
+    // carried outward on VersionConflictError, proven here against real D1
+    // rather than the double.
+    expect(error).toBeInstanceOf(VersionConflictError);
+    expect((error as VersionConflictError).currentVersionIdx).toBe(4);
   });
 });
 
 /**
- * A3: `WHERE enabled = 1` in `catalog-repository.ts` had zero coverage - no
- * catalog test exercised it, so deleting the predicate would leave the suite
- * green. `create`'s new A4 guard reuses the same `portal_document_types`
- * table and the same "the double cannot evaluate a WHERE clause" problem, so
- * both are proven together here against real D1.
+ * A4's `document_type_disabled` guard reuses `portal_document_types` and the
+ * same "the double cannot evaluate a WHERE clause" problem A3 has, so it is
+ * proven here against real D1. (A3 itself - `catalog-repository.ts`'s own
+ * `WHERE enabled = 1` - is covered in `catalog-repository.test.ts`, which
+ * already has the structurally-valid registration fixtures that
+ * `projectPublicDocumentType` needs to not filter a row out before
+ * `enabled` ever gets a chance to matter; that coverage does not belong
+ * here.)
  */
 describe("D1TenantDocumentRepository.create - document_type enablement (real D1, A4)", () => {
   let miniflare: Miniflare;
@@ -611,31 +625,5 @@ describe("D1TenantDocumentRepository.create - document_type enablement (real D1,
     const second = await repository.create({ context, key: "idem-1", fingerprint: "fp-1", document, audit }).catch(caught => caught);
     expect(first).toMatchObject({ code: "document_type_disabled" });
     expect(second).toMatchObject({ code: "document_type_disabled" });
-  });
-
-  it("A3 regression: the catalog only lists an enabled document type - enabled=1 and enabled=0 seeded side by side", async () => {
-    // This is A3's coverage: catalog-repository.ts's `WHERE enabled = 1` had
-    // no test touching enablement at all. Proven here (not in
-    // catalog-repository.test.ts) so it can reuse this file's full-migration
-    // Miniflare setup and seedDocumentType helper.
-    const { D1TenantCatalogRepository } = await import("../../src/tenant/catalog-repository.js");
-    await db.prepare(
-      "INSERT INTO portal_document_types (document_type, internal_name, enabled, registration_json, created_at) VALUES (?, ?, 1, ?, ?)",
-    ).bind("markdown", "markdown", JSON.stringify({}), "2026-09-11T00:00:00.000Z").run();
-    await db.prepare(
-      "INSERT INTO portal_document_types (document_type, internal_name, enabled, registration_json, created_at) VALUES (?, ?, 0, ?, ?)",
-    ).bind("psd", "psd", JSON.stringify({}), "2026-09-11T00:00:00.000Z").run();
-
-    const catalog = new D1TenantCatalogRepository(db);
-    const result = await db.prepare("SELECT document_type FROM portal_document_types WHERE enabled = 1").all();
-    // The registration JSON above is empty ({}), so projectPublicDocumentType
-    // will reject both rows as structurally incomplete (no typeCardBundle) -
-    // this test is only about which rows the WHERE clause itself lets
-    // through, which the raw query above proves directly: only "markdown".
-    expect((result.results ?? []).map((row: Record<string, unknown>) => row.document_type)).toEqual(["markdown"]);
-    // listDocumentTypes still returns an empty page (registrations are
-    // incomplete), confirming the repository does reach real D1 rather than
-    // throwing outright.
-    await expect(catalog.listDocumentTypes(context, {})).resolves.toEqual({ items: [], nextCursor: null });
   });
 });

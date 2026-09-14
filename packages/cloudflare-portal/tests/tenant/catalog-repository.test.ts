@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { readdir, readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { convertV4MiniflareOptions, Miniflare } from "miniflare";
+import type { D1Database } from "@cloudflare/workers-types";
 import { DocumentContractRecordSchema, PublicDocumentTypeSchema } from "@unidocs/protocol-tenant-portal";
 import { D1TenantCatalogRepository } from "../../src/tenant/catalog-repository.js";
 import { encodeCursor } from "../../src/tenant/cursor.js";
@@ -233,5 +237,78 @@ describe("D1TenantCatalogRepository.getDocumentContract", () => {
   it("returns null when no revision matches", async () => {
     const repository = new D1TenantCatalogRepository(databaseDouble([]));
     expect(await repository.getDocumentContract(context, "markdown", 99)).toBeNull();
+  });
+});
+
+/**
+ * A3: `WHERE enabled = 1` had zero coverage - no catalog test exercised
+ * enablement, so deleting the predicate from catalog-repository.ts left the
+ * whole suite green. An earlier version of this test seeded both rows with
+ * an empty `{}` registration and asserted through `listDocumentTypes`; that
+ * assertion was insensitive to the predicate, because
+ * `projectPublicDocumentType` rejects a `{}` registration for missing
+ * `typeCardBundle`/`viewBundle`/`builtinOperator` regardless of `enabled` -
+ * both rows were filtered out for an unrelated reason before `enabled` ever
+ * got a chance to matter, so deleting `WHERE enabled = 1` from the real
+ * query left this suite green too. Seeding structurally valid registrations
+ * (via the same `registrationFor` builder every other test in this file
+ * uses) closes that: now the only thing that can make "psd" disappear from
+ * the listing is the repository's own `enabled` predicate.
+ */
+describe("D1TenantCatalogRepository.listDocumentTypes - enablement (real D1, A3)", () => {
+  let miniflare: Miniflare;
+  let db: D1Database;
+
+  function collapseToOneStatementPerLine(sql: string): string {
+    return sql
+      .split(";")
+      .map(statement => statement.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .map(statement => `${statement};`)
+      .join("\n");
+  }
+
+  beforeEach(async () => {
+    miniflare = new Miniflare(convertV4MiniflareOptions({
+      workers: [{
+        name: "catalog-repository-enablement-test",
+        modules: true,
+        script: "export default { fetch() { return new Response('ok'); } };",
+        compatibilityDate: "2025-08-17",
+        d1Databases: { DB: `catalog-repository-enablement-${crypto.randomUUID()}` },
+      }],
+    }));
+    await miniflare.ready;
+    db = await miniflare.getD1Database("DB", "catalog-repository-enablement-test") as unknown as D1Database;
+    const migrationsDir = fileURLToPath(new URL("../../migrations", import.meta.url));
+    const files = (await readdir(migrationsDir)).filter(name => name.endsWith(".sql")).sort();
+    for (const file of files) {
+      await db.exec(collapseToOneStatementPerLine(await readFile(`${migrationsDir}/${file}`, "utf8")));
+    }
+  });
+
+  afterEach(async () => {
+    await miniflare.dispose();
+  });
+
+  async function seedDocumentType(documentType: string, enabled: boolean) {
+    await db.prepare(
+      "INSERT INTO portal_document_types (document_type, internal_name, enabled, registration_json, created_at) VALUES (?, ?, ?, ?, ?)",
+    ).bind(
+      documentType, documentType, enabled ? 1 : 0,
+      JSON.stringify(registrationFor(documentType)), "2026-09-11T00:00:00.000Z",
+    ).run();
+  }
+
+  it("A3 regression: lists only the enabled document type when an enabled and a disabled type are seeded side by side, both structurally valid", async () => {
+    await seedDocumentType("markdown", true);
+    await seedDocumentType("psd", false);
+
+    const catalog = new D1TenantCatalogRepository(db);
+    const page = await catalog.listDocumentTypes(context, {});
+    // "psd" is structurally identical to "markdown" (both built through
+    // registrationFor and would independently pass projectPublicDocumentType
+    // on their own) - the only reason it can be missing here is enabled = 0.
+    expect(page.items.map(item => item.documentType)).toEqual(["markdown"]);
   });
 });
