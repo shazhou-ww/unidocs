@@ -339,7 +339,10 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
             {split && <p className="pane-label">当前版本</p>}
             {note !== null && <p className="pane-note">{note}</p>}
             {session.currentVersion === null
-              ? <p className="muted">这件作品还在初始化，暂时没有可读的版本。</p>
+              // 设计文档 §5.4：首版本产生前不能创建 thread 或追加 comment——这里没有
+              // ViewHost 可挂（下面 else 分支才有），"添加评论" 的触发器根本不会装上，
+              // 前端也就不会发出注定 404 的写请求。
+              ? <p className="muted">这件作品还在等待 Operator 初始化，暂时没有可读的版本，也还不能评论。</p>
               : (
                 <ViewHost
                   key={`${props.documentId}:current`}
