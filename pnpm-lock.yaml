@@ -20,6 +20,15 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
+      '@unicas/tenant-blob-client':
+        specifier: workspace:*
+        version: link:unicas-packages/tenant-blob-client
+      '@unicas/tenant-client':
+        specifier: workspace:*
+        version: link:unicas-packages/tenant-client
+      '@unidocs/service-auth':
+        specifier: workspace:*
+        version: link:packages/service-auth
       azurite:
         specifier: 3.36.0
         version: 3.36.0(@types/node@24.13.3)(debug@4.4.3(supports-color@10.2.2))(pg@8.23.0)(supports-color@10.2.2)
