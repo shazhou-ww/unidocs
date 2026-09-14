@@ -49,5 +49,7 @@ export { createTenantVersionService } from "./tenant/versions.js";
 export type { TenantVersionRepository, VersionSnapshot } from "./tenant/versions.js";
 export { createTenantThreadService } from "./tenant/threads.js";
 export type { CommentAnchor, CommentAppendCommand, DocumentLocationValidator, TenantThreadRepository, ThreadCreateCommand } from "./tenant/threads.js";
+export { createTenantSubmissionService } from "./tenant/submissions.js";
+export type { CommittedSubmissionReceipt, SnapshotVerifier, SubmissionCommitCommand, SubmissionCommitOutcome, SubmissionContract, SubmissionState, SubmissionThreadState, TenantSubmissionRepository } from "./tenant/submissions.js";
 export { createTenantCasService } from "./tenant/cas.js";
 export type { CasCapabilityIssuer } from "./tenant/cas.js";
