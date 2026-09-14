@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import type { D1Database } from "@cloudflare/workers-types";
+import type { CommentRecord } from "@unidocs/protocol-tenant-portal";
 import { TenantOperationError } from "@unidocs/portal-service";
 import { D1TenantThreadRepository } from "../../src/tenant/thread-repository.js";
 import { encodeCursor } from "../../src/tenant/cursor.js";
@@ -623,6 +624,14 @@ describe("D1TenantThreadRepository.create / get / appendComment (real D1)", () =
       .rejects.toBeInstanceOf(TenantOperationError);
   });
 
+  it("fails to append to another tenant's thread", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    await expect(repository.appendComment({
+      ...appendCommand(created.threadId), context: { ...context, tenantId: "t-other" },
+    })).rejects.toMatchObject({ code: "not_found" });
+  });
+
   it("appending after the thread has been answered makes it open again", async () => {
     const repository = new D1TenantThreadRepository(db);
     const created = await repository.create(createCommand());
@@ -677,41 +686,101 @@ describe("D1TenantThreadRepository.create / get / appendComment (real D1)", () =
     ).bind("t-local", "doc-1").first<{ n: number }>();
     expect(count?.n).toBe(1);
   });
+
+  /**
+   * The comment insert and its receipt now share one atomic `batch`, so a
+   * same-key race must leave exactly the winner's row behind - never an
+   * orphan from a loser whose batch rolled back. This is the in-tree proof:
+   * five concurrent `appendComment` calls with the identical key against a
+   * thread that already has commentIdx 0 must land exactly one more comment
+   * row (commentIdx 1), and every caller must observe that same index.
+   */
+  it("leaves no orphan comment when the same key races concurrently", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    const results = await Promise.all(
+      Array.from({ length: 5 }, () => repository.appendComment(appendCommand(created.threadId, { key: "key-append-race", fingerprint: "fp-append-race" }))),
+    );
+    const indices = new Set(results.map(r => r.commentIdx));
+    expect(indices).toEqual(new Set([1]));
+
+    const count = await db.prepare(
+      "SELECT COUNT(*) as n FROM portal_comments WHERE tenant_id = ? AND document_id = ? AND thread_id = ?",
+    ).bind("t-local", "doc-1", created.threadId).first<{ n: number }>();
+    expect(count?.n).toBe(2);
+  });
+
+  /**
+   * The sharper variant of the same bug: same key, *different* fingerprints,
+   * racing concurrently. Before the comment and its receipt were batched
+   * together, the loser could commit its own comment row and only then
+   * discover the fingerprint mismatch while writing the receipt - meaning it
+   * both persisted a write and reported idempotency_conflict to its caller,
+   * the inverse of what an idempotency key promises. With the comment and
+   * receipt sharing one atomic batch, the loser's comment insert rolls back
+   * together with its failed receipt insert, so it contributes nothing.
+   */
+  it("rejects the losing fingerprint of a same-key race without persisting its write", async () => {
+    const repository = new D1TenantThreadRepository(db);
+    const created = await repository.create(createCommand());
+    const results = await Promise.allSettled(
+      Array.from({ length: 5 }, (_, i) =>
+        repository.appendComment(appendCommand(created.threadId, { key: "key-fingerprint-race", fingerprint: `fp-race-${i}` }))),
+    );
+
+    const fulfilled = results.filter((r): r is PromiseFulfilledResult<CommentRecord> => r.status === "fulfilled");
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(4);
+    for (const r of rejected) expect(r.reason).toMatchObject({ code: "idempotency_conflict" });
+
+    const count = await db.prepare(
+      "SELECT COUNT(*) as n FROM portal_comments WHERE tenant_id = ? AND document_id = ? AND thread_id = ?",
+    ).bind("t-local", "doc-1", created.threadId).first<{ n: number }>();
+    expect(count?.n).toBe(2);
+  });
 });
 
 /**
- * The concurrency test above exercises the real allocation query end to end,
- * but Miniflare's D1 simulation may simply serialize the five concurrent
+ * The concurrency tests above exercise the real allocation and batch end to
+ * end, but Miniflare's D1 simulation may simply serialize concurrent
  * `appendComment` calls without ever producing an actual primary-key
- * collision - which would leave the retry branch untested. This double
- * pins that branch directly: the first `RETURNING` attempt is made to throw
- * the exact error D1 raises for a `comment_idx` primary-key collision
- * (confirmed against real D1 in the probe referenced above), and the test
- * asserts the repository retries rather than surfacing that error.
+ * collision on an *independent* append - which would leave the retry branch
+ * untested. This double pins that branch directly: the first `batch` attempt
+ * is made to throw the exact error D1 raises for a `comment_idx`
+ * primary-key collision (confirmed against real D1 in the probe referenced
+ * in the task report), the receipt lookup on the retry path returns nothing
+ * (an independent collision, not a same-key duplicate), and the test asserts
+ * the repository retries with a freshly re-read index rather than surfacing
+ * that error.
  */
 describe("D1TenantThreadRepository.appendComment - retries a comment_idx collision", () => {
   it("retries the allocation once, and returns the index the second attempt won", async () => {
-    let attempts = 0;
+    let nextIdxReads = 0;
+    let batchAttempts = 0;
     const fakeDatabase = {
       prepare(sql: string) {
         return {
           bind: (..._args: unknown[]) => ({
-            first: async () => null,
-            all: async () => {
-              if (!sql.includes("RETURNING comment_idx")) return { results: [] };
-              attempts += 1;
-              if (attempts === 1) {
-                throw new Error(
-                  "D1_ERROR: UNIQUE constraint failed: portal_comments.tenant_id, portal_comments.document_id, portal_comments.thread_id, portal_comments.comment_idx: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
-                );
-              }
-              return { results: [{ comment_idx: 4 }] };
+            first: async () => {
+              if (!sql.includes("next_idx")) return null; // receipt lookup: no same-key duplicate exists
+              nextIdxReads += 1;
+              return { next_idx: nextIdxReads === 1 ? 4 : 5 };
             },
+            all: async () => ({ results: [] }),
             run: async () => ({ meta: { changes: 1 } }),
           }),
         };
       },
-      batch: async () => [],
+      batch: async () => {
+        batchAttempts += 1;
+        if (batchAttempts === 1) {
+          throw new Error(
+            "D1_ERROR: UNIQUE constraint failed: portal_comments.tenant_id, portal_comments.document_id, portal_comments.thread_id, portal_comments.comment_idx: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+          );
+        }
+        return [{ meta: { changes: 1 } }, { meta: { changes: 1 } }];
+      },
     } as unknown as D1Database;
 
     const repository = new D1TenantThreadRepository(fakeDatabase);
@@ -720,7 +789,42 @@ describe("D1TenantThreadRepository.appendComment - retries a comment_idx collisi
       key: "retry-key", fingerprint: "retry-fp",
       request: { baseVersionIdx: 0, content: { text: "hi", richContent: null, attachments: [] }, location: null },
     });
-    expect(record.commentIdx).toBe(4);
-    expect(attempts).toBe(2);
+    expect(record.commentIdx).toBe(5);
+    expect(batchAttempts).toBe(2);
+    expect(nextIdxReads).toBe(2);
+  });
+
+  /**
+   * When every attempt loses the index race - `MAX_COMMENT_IDX_ATTEMPTS`
+   * collisions in a row, a contention scenario this double can force but a
+   * sequential or even a five-way concurrent real-D1 test cannot - the
+   * failure is transient contention, not a client error. Plan 3's error
+   * mapper turns a bare `Error` into an opaque 500; `unavailable` is the
+   * honest code, since it tells the client to retry rather than to give up.
+   */
+  it("throws unavailable once every retry attempt loses the index race", async () => {
+    const fakeDatabase = {
+      prepare(sql: string) {
+        return {
+          bind: (..._args: unknown[]) => ({
+            first: async () => (sql.includes("next_idx") ? { next_idx: 1 } : null),
+            all: async () => ({ results: [] }),
+            run: async () => ({ meta: { changes: 1 } }),
+          }),
+        };
+      },
+      batch: async () => {
+        throw new Error(
+          "D1_ERROR: UNIQUE constraint failed: portal_comments.tenant_id, portal_comments.document_id, portal_comments.thread_id, portal_comments.comment_idx: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+        );
+      },
+    } as unknown as D1Database;
+
+    const repository = new D1TenantThreadRepository(fakeDatabase);
+    await expect(repository.appendComment({
+      context, documentId: "doc-1", threadId: "thread-1",
+      key: "exhaust-key", fingerprint: "exhaust-fp",
+      request: { baseVersionIdx: 0, content: { text: "hi", richContent: null, attachments: [] }, location: null },
+    })).rejects.toMatchObject({ code: "unavailable" });
   });
 });

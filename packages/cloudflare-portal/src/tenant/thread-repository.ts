@@ -218,30 +218,36 @@ export class D1TenantThreadRepository implements TenantThreadRepository {
   }
 
   /**
-   * Allocates `comment_idx` inside the `INSERT ... SELECT ... RETURNING`
-   * itself, rather than reading `MAX(comment_idx)` and writing it back as two
-   * statements - between which a concurrent append could read the same
-   * value. The composite primary key `(tenant_id, document_id, thread_id,
-   * comment_idx)` is the backstop: two concurrent appends computing the same
-   * next index can both attempt the insert, but only one can win it: the
-   * loser gets a primary-key violation and retries, recomputing the index
-   * against whatever the winner just committed. `RETURNING` was confirmed to
-   * work against D1 under Miniflare before being relied on here (see the
-   * task report); D1 also enforces the `FOREIGN KEY` from `portal_comments`
-   * to `portal_threads` by default, which is what turns an append to a
-   * nonexistent thread into `not_found` without a separate existence check.
+   * Allocates `comment_idx` by reading `COALESCE(MAX(comment_idx), -1) + 1`
+   * and then, in the SAME atomic `batch`, inserting the comment at that
+   * explicit index together with the idempotency receipt. The read is only a
+   * proposal - it does not decide anything by itself, so this is not the
+   * read-then-write pattern the brief warns against. The composite primary
+   * key `(tenant_id, document_id, thread_id, comment_idx)` is still what
+   * adjudicates: if a concurrent writer already took that index, the insert
+   * loses the batch and rolls back with it, and the loop retries against
+   * whatever that writer just committed.
    *
-   * The idempotency receipt is written only after the index is known, since
-   * the `CommentRecord` it stores needs that index - so, unlike `create`, it
-   * cannot be part of the same atomic batch as the insert above. A duplicate
-   * request replayed sequentially is still fully idempotent (the `replay`
-   * check above returns the first response before any of this runs again);
-   * only two truly concurrent callers reusing the very same idempotency key
-   * inside this narrow window could each append a comment before either
-   * receipt lands. That is a much rarer condition than two independent
-   * callers appending near-simultaneously - the case this method exists to
-   * make race-free - and is the same trade-off `AppendCommentRequest`'s
-   * design accepts elsewhere in this plan.
+   * Batching the comment and its receipt together (rather than writing the
+   * receipt only after the comment, as an earlier version of this method
+   * did) closes two races a receipt-only-guards-itself design leaves open:
+   * two same-key concurrent callers could otherwise each get past the
+   * initial `replay()` check and each successfully commit their own comment
+   * before either receipt landed - producing orphan rows even when both
+   * calls carried the same fingerprint, or, worse, a persisted write from
+   * the *loser* of a same-key-different-fingerprint race, which then also
+   * threw `idempotency_conflict` - the exact inverse of what an idempotency
+   * key promises. With the comment and its receipt as one batch, losing
+   * either primary key - the comment's or the receipt's - rolls back both
+   * statements, so a same-key racer never leaves a row behind: it either
+   * commits cleanly or contributes nothing.
+   *
+   * The `FOREIGN KEY constraint failed` check runs before the `replay()`
+   * re-read below: `SELECT MAX(comment_idx)` over a nonexistent thread still
+   * returns a row (COALESCE'd to 0), so a missing thread is only caught when
+   * the insert itself trips `portal_comments`' `FOREIGN KEY` to
+   * `portal_threads` - which D1 enforces by default - and that must map to
+   * `not_found` regardless of what a receipt lookup would say.
    */
   async appendComment(command: CommentAppendCommand): Promise<CommentRecord> {
     const { context, documentId, threadId, key, fingerprint, request } = command;
@@ -254,52 +260,48 @@ export class D1TenantThreadRepository implements TenantThreadRepository {
     const contentJson = JSON.stringify(request.content);
     const locationJson = request.location ? JSON.stringify(request.location) : null;
 
-    let commentIdx: number | null = null;
-    for (let attempt = 0; attempt < MAX_COMMENT_IDX_ATTEMPTS && commentIdx === null; attempt++) {
-      let row: { comment_idx: number } | undefined;
+    for (let attempt = 0; attempt < MAX_COMMENT_IDX_ATTEMPTS; attempt++) {
+      const next = await this.database.prepare(
+        `SELECT COALESCE(MAX(comment_idx), -1) + 1 AS next_idx
+         FROM portal_comments WHERE tenant_id = ? AND document_id = ? AND thread_id = ?`,
+      ).bind(context.tenantId, documentId, threadId).first<{ next_idx: number }>();
+      const commentIdx = next?.next_idx ?? 0;
+
+      const comment = CommentRecordSchema.parse({
+        commentIdx, baseVersionIdx: request.baseVersionIdx, content: request.content, location: request.location,
+        authorId: context.principalId, createdAt,
+      });
+
       try {
-        const result = await this.database.prepare(
-          `INSERT INTO portal_comments (tenant_id, document_id, thread_id, comment_idx, base_version_idx, content_json, location_json, author_id, created_at)
-           SELECT ?1, ?2, ?3, COALESCE(MAX(comment_idx), -1) + 1, ?4, ?5, ?6, ?7, ?8
-           FROM portal_comments WHERE tenant_id = ?1 AND document_id = ?2 AND thread_id = ?3
-           RETURNING comment_idx`,
-        ).bind(context.tenantId, documentId, threadId, request.baseVersionIdx, contentJson, locationJson, context.principalId, createdAtSeconds)
-          .all<{ comment_idx: number }>();
-        row = result.results?.[0];
+        await this.database.batch([
+          this.database.prepare(
+            `INSERT INTO portal_comments (tenant_id, document_id, thread_id, comment_idx, base_version_idx, content_json, location_json, author_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).bind(context.tenantId, documentId, threadId, commentIdx, request.baseVersionIdx, contentJson, locationJson, context.principalId, createdAtSeconds),
+          this.database.prepare(
+            `INSERT INTO portal_tenant_idempotency_receipts (tenant_id, actor_id, operation, key, fingerprint, response_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          ).bind(context.tenantId, context.principalId, APPEND_COMMENT_OPERATION, key, fingerprint, JSON.stringify(comment), createdAtSeconds),
+        ]);
+        return comment;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes("FOREIGN KEY constraint failed")) throw new TenantOperationError("not_found");
+
+        // Either primary key could have lost this batch: the comment's (an
+        // independent append won this index first) or the receipt's (a
+        // same-key racer got there first - possibly with a different
+        // fingerprint). A receipt match means the latter: replay its winner,
+        // or surface the fingerprint mismatch as a conflict - never our own
+        // now-rolled-back write.
+        const concurrent = await this.replay(context, APPEND_COMMENT_OPERATION, key, fingerprint, CommentRecordSchema);
+        if (concurrent) return concurrent;
+
         if (message.includes("UNIQUE constraint failed")) continue;
         throw error;
       }
-      // The SELECT is an aggregate with no GROUP BY, so it always yields
-      // exactly one row for any thread that exists (comment_idx 0 came from
-      // `create`), even before any prior appendComment call; a nonexistent
-      // thread instead fails the FOREIGN KEY check above before RETURNING
-      // runs. This is therefore unreachable in practice - kept only as a
-      // defensive backstop against relying on that D1/SQLite behavior.
-      if (!row) throw new TenantOperationError("not_found");
-      commentIdx = row.comment_idx;
     }
-    if (commentIdx === null) throw new Error("comment_idx allocation did not converge after retrying");
-
-    const comment = CommentRecordSchema.parse({
-      commentIdx, baseVersionIdx: request.baseVersionIdx, content: request.content, location: request.location,
-      authorId: context.principalId, createdAt,
-    });
-
-    try {
-      await this.database.prepare(
-        `INSERT INTO portal_tenant_idempotency_receipts (tenant_id, actor_id, operation, key, fingerprint, response_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(context.tenantId, context.principalId, APPEND_COMMENT_OPERATION, key, fingerprint, JSON.stringify(comment), createdAtSeconds).run();
-    } catch (error) {
-      const concurrent = await this.replay(context, APPEND_COMMENT_OPERATION, key, fingerprint, CommentRecordSchema);
-      if (concurrent) return concurrent;
-      throw error;
-    }
-
-    return comment;
+    throw new TenantOperationError("unavailable");
   }
 
   /**
