@@ -5,11 +5,12 @@
  * bare `http://127.0.0.1` cannot slip through.
  *
  * Lives here, in the cloud-neutral core, rather than in the Cloudflare adapter
- * that first needed it: the rule is enforced at four sites now — the portal's
+ * that first needed it: the rule is enforced at five sites now — the portal's
  * Google config, its session auth, its login round trip, and the type-card
- * bundle origin below in `admin/type-card-bundles.ts`. The bundle one is in
- * this package, which cannot import from the adapter, and writing the rule a
- * second time is what let the earlier three drift apart.
+ * and view bundle origins in `admin/type-card-bundles.ts` and
+ * `admin/view-bundles.ts`. The bundle ones are in this package, which cannot
+ * import from the adapter, and writing the rule a second time is what let the
+ * earlier three drift apart.
  */
 export const LOCAL_DEV_ORIGIN_PATTERN = /^http:\/\/(?:127\.0\.0\.1|localhost):\d{1,5}$/;
 
