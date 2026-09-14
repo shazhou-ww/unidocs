@@ -122,6 +122,24 @@ test("Worker serves a normal admin path without touching the Markdown Operator b
   expect(response.status).toBe(200);
 });
 
+// `pnpm dev portal` prints the bare origin first, and that origin used to be a
+// plain 404. Production never routes `/` to this worker (see
+// wrangler.production.jsonc), so the redirect only changes local development.
+test("Worker redirects the bare origin to the tenant console", async () => {
+  const env = baseEnvWithoutOperatorConfig() as unknown as Env;
+  for (const method of ["GET", "HEAD"]) {
+    const response = await worker.fetch(new Request("http://127.0.0.1:19195/", { method }), env);
+    expect(response.status, method).toBe(302);
+    expect(response.headers.get("location"), method).toBe("/portal/");
+    expect(response.headers.get("cache-control"), method).toBe("no-store");
+    expect(response.headers.get("x-request-id"), method).toBeTruthy();
+  }
+  const post = await worker.fetch(new Request("http://127.0.0.1:19195/", { method: "POST" }), env);
+  expect(post.status).not.toBe(302);
+  const query = await worker.fetch(new Request("http://127.0.0.1:19195/?next=elsewhere"), env);
+  expect(query.headers.get("location")).toBe("/portal/");
+});
+
 test("Worker serves the tenant WebUI without touching the Markdown Operator bindings", async () => {
   const env = baseEnvWithoutOperatorConfig() as unknown as Env;
   const response = await worker.fetch(new Request("http://127.0.0.1:19195/portal/"), env);
