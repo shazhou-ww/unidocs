@@ -4,7 +4,7 @@ import { experimental_ZodSmartCoercionPlugin } from "@orpc/zod/zod4";
 import { tenantApiContract } from "@unidocs/protocol-tenant-portal";
 import {
   createTenantCatalogService, createTenantDocumentService, createTenantThreadService, createTenantVersionService,
-  TenantAccessError, TenantOperationError,
+  boundedBytes, parseStrictJson, TenantAccessError, TenantOperationError,
   type DocumentLocationValidator, type TenantCatalogRepository, type TenantContext, type TenantDocumentRepository,
   type TenantThreadRepository, type TenantVersionRepository,
 } from "@unidocs/portal-service";
@@ -33,6 +33,15 @@ interface TenantHttpContext {
   readonly response: ResponseOverrides;
 }
 
+/**
+ * Largest accepted request body. The biggest legitimate body is a comment:
+ * TENANT_LIMITS.messageText is 16 384 UTF-16 code units, which is at most
+ * ~65 KB as UTF-8 (JSON escaping aside), plus up to 8 KB of location payload
+ * and 20 attachment references. 128 KiB leaves headroom for all of that
+ * without letting a caller make the Worker buffer an unbounded body.
+ */
+const MAX_BODY_BYTES = 131_072;
+
 const STATUS = {
   invalid_request: 400, unauthorized: 401, forbidden: 403, not_found: 404, limit_exceeded: 413,
   location_contract_violation: 422, document_type_disabled: 409, version_conflict: 409,
@@ -57,12 +66,12 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
     documents: {
       list: implementation.documents.list.handler(({ input, context }) =>
         documents.list(context.tenant, input.params.tenantId, input.query ?? {})),
-      // Task 7 replaces this placeholder with documents.create.
-      create: implementation.documents.create.handler(() => { throw new TenantOperationError("unavailable"); }),
+      create: implementation.documents.create.handler(({ input, context }) =>
+        documents.create(context.tenant, input.params.tenantId, input.body, input.headers["idempotency-key"], context.requestId)),
       get: implementation.documents.get.handler(({ input, context }) =>
         documents.get(context.tenant, input.params.tenantId, input.params.documentId)),
-      // Task 7 replaces this placeholder with documents.moveCurrentVersion.
-      moveCurrentVersion: implementation.documents.moveCurrentVersion.handler(() => { throw new TenantOperationError("unavailable"); }),
+      moveCurrentVersion: implementation.documents.moveCurrentVersion.handler(({ input, context }) =>
+        documents.moveCurrentVersion(context.tenant, input.params.tenantId, input.params.documentId, input.body, context.requestId)),
       listAudit: implementation.documents.listAudit.handler(({ input, context }) =>
         documents.listAuditEvents(context.tenant, input.params.tenantId, input.params.documentId, input.query ?? {})),
     },
@@ -80,12 +89,12 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
     threads: {
       list: implementation.threads.list.handler(({ input, context }) =>
         threads.list(context.tenant, input.params.tenantId, input.params.documentId, input.query ?? {})),
-      // Task 7 replaces this placeholder with threads.create.
-      create: implementation.threads.create.handler(() => { throw new TenantOperationError("unavailable"); }),
+      create: implementation.threads.create.handler(({ input, context }) =>
+        threads.create(context.tenant, input.params.tenantId, input.params.documentId, input.body, input.headers["idempotency-key"])),
       get: implementation.threads.get.handler(({ input, context }) =>
         threads.get(context.tenant, input.params.tenantId, input.params.documentId, input.params.threadId)),
-      // Task 7 replaces this placeholder with threads.appendComment.
-      appendComment: implementation.threads.appendComment.handler(() => { throw new TenantOperationError("unavailable"); }),
+      appendComment: implementation.threads.appendComment.handler(({ input, context }) =>
+        threads.appendComment(context.tenant, input.params.tenantId, input.params.documentId, input.params.threadId, input.body, input.headers["idempotency-key"])),
     },
     cas: {
       // v0 does not issue direct-UniCAS capabilities (spec §1.3: browser-direct
@@ -97,10 +106,32 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
 
   return async (request, tenant, requestId) => {
     const path = new URL(request.url).pathname;
+    let boundedRequest = request;
+    if (request.method === "POST") {
+      // Checked here, before oRPC sees the body: its codec would buffer any size,
+      // accept duplicate keys (last one wins), and surface malformed JSON as an
+      // unexpected error rather than a client mistake.
+      if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json" || request.headers.has("content-encoding")) {
+        return Response.json({ error: { code: "invalid_request", message: "A JSON request body is required", requestId } }, { status: 400 });
+      }
+      try {
+        if (!request.body) throw new TypeError("Missing request body");
+        const content = new Uint8Array(MAX_BODY_BYTES);
+        let length = 0;
+        for await (const chunk of boundedBytes(request.body, content.length)) { content.set(chunk, length); length += chunk.byteLength; }
+        parseStrictJson(content.subarray(0, length));
+        boundedRequest = new Request(request.url, { method: request.method, headers: request.headers, body: content.slice(0, length) });
+      } catch {
+        return Response.json({ error: { code: "invalid_request", message: "Invalid or oversized JSON request", requestId } }, { status: 400 });
+      }
+    }
     const handler = new OpenAPIHandler(router, {
       // Query strings arrive as strings; limit, open and versionIdx must be coerced before validation.
       plugins: request.method === "GET" ? [new experimental_ZodSmartCoercionPlugin()] : [],
-      interceptors: [async ({ next }) => {
+      // Client interceptors wrap the procedure call only - input validation, the
+      // handler and output validation - never request decoding, so a body the
+      // codec could not read stays a plain 400 and is not logged as a failure.
+      clientInterceptors: [async ({ next }) => {
         try {
           return await next();
         } catch (error) {
@@ -112,6 +143,8 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
               data: { requestId, ...(details ? { details } : {}) },
             });
           }
+          // A 4xx ORPCError (such as failed input validation) is the caller's
+          // mistake, not an operation failure; only the unexpected is logged.
           if (!(error instanceof ORPCError) || error.status >= 500) {
             // Name and message only: repository errors can carry SQL fragments,
             // which belong in the log and never in the response body.
@@ -133,7 +166,7 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
       },
     });
     const overrides: ResponseOverrides = {};
-    const result = await handler.handle(request, { context: { tenant, requestId, response: overrides } });
+    const result = await handler.handle(boundedRequest, { context: { tenant, requestId, response: overrides } });
     if (!result.matched) {
       return Response.json({ error: { code: "not_found", message: "The requested resource was not found", requestId } }, { status: 404 });
     }

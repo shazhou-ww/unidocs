@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@unidocs/portal-service";
 import { D1TenantCatalogRepository } from "../../src/tenant/catalog-repository.js";
 import { D1TenantDocumentRepository } from "../../src/tenant/document-repository.js";
@@ -34,6 +34,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await real.dispose();
 });
 
@@ -107,11 +108,22 @@ describe("tenant HTTP reads", () => {
       threads: new D1TenantThreadRepository(real.db),
       validateLocation: createLocationValidator(),
     });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await exploding(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`), tenant, "req-1");
     expect(response.status).toBe(500);
     const text = await response.text();
     expect(text).not.toContain("secret_column");
     expect(JSON.parse(text)).toEqual({ error: { code: "internal_error", message: "Tenant operation failed", requestId: "req-1" } });
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(logged.mock.calls[0]?.[0]))).toMatchObject({ event: "portal_operation_failed", name: "Error", requestId: "req-1" });
+  });
+
+  it("answers an unmatched route under the tenant base path with 404 in the contract's error shape", async () => {
+    const response = await get("/api/v1/tenants/t-local/no-such-resource");
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "not_found", message: "The requested resource was not found", requestId: "req-1" },
+    });
   });
 
   it("lists thread references for a document", async () => {
