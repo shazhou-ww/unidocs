@@ -78,28 +78,44 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
     const documentCreatedAt = Math.floor(Date.parse(document.createdAt) / 1000);
     const auditOccurredAt = Math.floor(Date.parse(audit.occurredAt) / 1000);
 
+    let results: Awaited<ReturnType<D1Database["batch"]>>;
     try {
       // One atomic write: the receipt, the document row and its audit event all
-      // land together, or none of them do. A UNIQUE violation on the receipt's
+      // land together, or none of them do. Each of the three is additionally
+      // guarded by the same EXISTS check against portal_document_types - an
+      // unknown or disabled document type makes every statement a no-op
+      // rather than a partial write, so a document with no type card, view
+      // bundle or Operator never lands, and a retry after document_type_disabled
+      // has no stale receipt to replay. A UNIQUE violation on the receipt's
       // primary key (tenant_id, actor_id, operation, key) is how a concurrent
       // duplicate of this same request surfaces - it is absorbed below by
       // re-reading the receipt, rather than reported as a failure.
-      await this.database.batch([
+      results = await this.database.batch([
         this.database.prepare(
           `INSERT INTO portal_tenant_idempotency_receipts (tenant_id, actor_id, operation, key, fingerprint, response_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(context.tenantId, context.principalId, CREATE_OPERATION, key, fingerprint, JSON.stringify(document), documentCreatedAt),
+           SELECT ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM portal_document_types WHERE document_type = ? AND enabled = 1)`,
+        ).bind(
+          context.tenantId, context.principalId, CREATE_OPERATION, key, fingerprint, JSON.stringify(document), documentCreatedAt,
+          document.documentType,
+        ),
         this.database.prepare(
           `INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        ).bind(context.tenantId, document.documentId, document.name, document.documentType, document.currentVersionIdx, documentCreatedAt),
+           SELECT ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM portal_document_types WHERE document_type = ? AND enabled = 1)`,
+        ).bind(
+          context.tenantId, document.documentId, document.name, document.documentType, document.currentVersionIdx, documentCreatedAt,
+          document.documentType,
+        ),
         this.database.prepare(
           `INSERT INTO portal_document_audit
              (audit_event_id, tenant_id, document_id, actor_id, action, before_version_idx, after_version_idx, reason, request_id, occurred_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM portal_document_types WHERE document_type = ? AND enabled = 1)`,
         ).bind(
           audit.auditEventId, context.tenantId, document.documentId, audit.actorId, audit.action,
           audit.beforeVersionIdx, audit.afterVersionIdx, audit.reason, audit.requestId, auditOccurredAt,
+          document.documentType,
         ),
       ]);
     } catch (error) {
@@ -107,6 +123,9 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
       if (concurrent) return concurrent;
       throw error;
     }
+
+    const documentResult = results[1];
+    if (!documentResult || documentResult.meta.changes === 0) throw new TenantOperationError("document_type_disabled");
 
     return DocumentRecordSchema.parse(document);
   }
@@ -154,22 +173,54 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
    * `null` before the first version), rather than a preceding SELECT - so
    * there is no window between checking the pointer and moving it.
    *
-   * The audit INSERT is guarded by the same fact the UPDATE's WHERE clause
-   * establishes - that `current_version_idx` now equals `targetVersionIdx` -
-   * via a correlated EXISTS, so both statements share one success condition.
-   * A batch is one transaction, but an UPDATE matching zero rows does not
-   * roll it back, so an unconditional audit insert would otherwise record a
-   * move that never happened.
+   * The audit INSERT is batched BEFORE the UPDATE and guarded by the exact
+   * same PRE-state condition the UPDATE's WHERE clause tests - the pointer
+   * still equalling `observedCurrentVersionIdx`, via `IS`, and the target
+   * version's existence - rather than the post-move state. A `batch` is one
+   * transaction whose statements run in order against a single consistent
+   * snapshot, so both guards observe the same "as of" state: nothing between
+   * them can change what either EXISTS check sees.
+   *
+   * An earlier version of this guard used the POST-move state
+   * (`current_version_idx = targetVersionIdx`) instead. That is wrong: when
+   * the pointer already equals `targetVersionIdx` before this call (a stale
+   * client re-observing a move someone else already made), the UPDATE's `IS
+   * observedCurrentVersionIdx` comparison correctly fails and moves nothing,
+   * but the post-state EXISTS check is true anyway - coincidentally, since
+   * the pointer already sat at the target - so the audit INSERT fired and
+   * recorded a move that never happened, into an append-only table with no
+   * correction path, moments before the method itself threw
+   * `version_conflict`. Guarding on the pre-state instead ties the audit
+   * INSERT to the exact same fact the UPDATE requires to succeed, so a
+   * refused move writes nothing.
    *
    * `meta.changes === 0` on the UPDATE means either the lock or the target
-   * version's existence check failed; both are reported as `version_conflict`
-   * without a following read, since nothing moved.
+   * version's existence check failed. Per `moveCurrentVersionContract`, that
+   * is normally `version_conflict` - but if the document itself no longer
+   * exists (deleted, or never existed), the contract instead declares
+   * `not_found`, and nothing else in this method has done the read needed to
+   * tell the two apart, so a refusal now takes one extra read to decide
+   * which.
    */
   async moveCurrentVersion(command: CurrentVersionMoveCommand): Promise<DocumentRecord> {
     const { context, documentId, observedCurrentVersionIdx, targetVersionIdx, audit } = command;
     const auditOccurredAt = Math.floor(Date.parse(audit.occurredAt) / 1000);
 
     const results = await this.database.batch([
+      this.database.prepare(
+        `INSERT INTO portal_document_audit
+           (audit_event_id, tenant_id, document_id, actor_id, action, before_version_idx, after_version_idx, reason, request_id, occurred_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM portal_documents
+                       WHERE tenant_id = ? AND document_id = ? AND current_version_idx IS ?)
+           AND EXISTS (SELECT 1 FROM portal_versions
+                       WHERE tenant_id = ? AND document_id = ? AND version_idx = ?)`,
+      ).bind(
+        audit.auditEventId, context.tenantId, documentId, audit.actorId, audit.action,
+        audit.beforeVersionIdx, audit.afterVersionIdx, audit.reason, audit.requestId, auditOccurredAt,
+        context.tenantId, documentId, observedCurrentVersionIdx,
+        context.tenantId, documentId, targetVersionIdx,
+      ),
       this.database.prepare(
         `UPDATE portal_documents SET current_version_idx = ?
          WHERE tenant_id = ? AND document_id = ?
@@ -181,21 +232,13 @@ export class D1TenantDocumentRepository implements TenantDocumentRepository {
         observedCurrentVersionIdx,
         context.tenantId, documentId, targetVersionIdx,
       ),
-      this.database.prepare(
-        `INSERT INTO portal_document_audit
-           (audit_event_id, tenant_id, document_id, actor_id, action, before_version_idx, after_version_idx, reason, request_id, occurred_at)
-         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-         WHERE EXISTS (SELECT 1 FROM portal_documents
-                       WHERE tenant_id = ? AND document_id = ? AND current_version_idx = ?)`,
-      ).bind(
-        audit.auditEventId, context.tenantId, documentId, audit.actorId, audit.action,
-        audit.beforeVersionIdx, audit.afterVersionIdx, audit.reason, audit.requestId, auditOccurredAt,
-        context.tenantId, documentId, targetVersionIdx,
-      ),
     ]);
 
-    const updateResult = results[0];
-    if (!updateResult || updateResult.meta.changes === 0) throw new TenantOperationError("version_conflict");
+    const updateResult = results[1];
+    if (!updateResult || updateResult.meta.changes === 0) {
+      const document = await this.get(context, documentId);
+      throw new TenantOperationError(document ? "version_conflict" : "not_found");
+    }
 
     const updated = await this.get(context, documentId);
     if (!updated) throw new TenantOperationError("not_found");

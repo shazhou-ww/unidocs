@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { CasClientError } from "@unicas/tenant-blob-client";
 import {
   VersionRecordSchema,
   type AddressedComment,
@@ -100,6 +101,21 @@ export class D1TenantVersionRepository implements TenantVersionRepository {
    *
    * A missing version returns `null` before the snapshot store is ever
    * called - a version that does not exist must not produce CAS traffic.
+   *
+   * `snapshots.read` can fail in ways that have nothing to do with the D1 row
+   * being fine: the blob may have been collected out of CAS (surfaced as a
+   * `CasClientError` with a 404 status), its stored size may no longer match
+   * what the version row declares (`snapshot-store.ts`'s bare `Error` for
+   * that mismatch), or CAS itself may simply be unreachable or failing (any
+   * other `CasClientError` status, or a network-level throw that never got a
+   * response at all). The first two are `content_unavailable` - the content
+   * this specific reference names is gone or inconsistent, not a transient
+   * fault - and the entry point (`TENANT_LIMITS`'s sibling code in
+   * `access.ts`) exists precisely for that. Everything else is `unavailable`,
+   * since it says nothing about this blob in particular. Left unmapped, any
+   * of these would otherwise propagate as a bare `Error` with no
+   * `TenantOperationCode`, which Plan 3's HTTP layer has no way to turn into
+   * the right status.
    */
   async readSnapshot(context: TenantContext, documentId: string, versionIdx: number): Promise<VersionSnapshot | null> {
     const row = await this.database.prepare(
@@ -110,11 +126,20 @@ export class D1TenantVersionRepository implements TenantVersionRepository {
     ).bind(context.tenantId, documentId, versionIdx).first<SnapshotRow>();
     if (!row) return null;
 
-    const body = await this.snapshots.read({
-      blobHash: row.snapshot_blob_hash,
-      size: row.snapshot_size,
-      contentType: row.snapshot_content_type,
-    });
+    let body: ReadableStream<Uint8Array>;
+    try {
+      body = await this.snapshots.read({
+        blobHash: row.snapshot_blob_hash,
+        size: row.snapshot_size,
+        contentType: row.snapshot_content_type,
+      });
+    } catch (error) {
+      if (error instanceof CasClientError && error.status === 404) throw new TenantOperationError("content_unavailable");
+      if (error instanceof Error && /bytes, but the version record declares/.test(error.message)) {
+        throw new TenantOperationError("content_unavailable");
+      }
+      throw new TenantOperationError("unavailable");
+    }
     return { documentType: row.document_type, body };
   }
 }

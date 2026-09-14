@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { TenantOperationError } from "@unidocs/portal-service";
 import { D1TenantVersionRepository } from "../../src/tenant/version-repository.js";
 import { databaseDouble } from "./d1-double.js";
 
@@ -141,5 +142,64 @@ describe("D1TenantVersionRepository.readSnapshot", () => {
     await repository.readSnapshot({ ...context, tenantId: "t-other" }, "doc-1", 0);
     expect(database.statements[0]?.args).toContain("t-other");
     expect(database.statements[0]?.args).not.toContain("t-local");
+  });
+
+  /**
+   * A5: before this, whatever `snapshots.read()` threw propagated raw - a
+   * bare Error or CasClientError with no TenantOperationCode, which Plan 3's
+   * HTTP layer has no way to turn into the right status. These pin the two
+   * dispositions the fix distinguishes: a missing/inconsistent blob
+   * (content_unavailable) versus CAS itself being unreachable or failing
+   * (unavailable).
+   */
+  const snapshotRow = {
+    snapshot_blob_hash: "hash-1",
+    snapshot_size: 1024,
+    snapshot_content_type: "application/cbor",
+    document_type: "markdown",
+  };
+
+  function failingStore(error: unknown) {
+    return { read: vi.fn().mockRejectedValue(error), retain: vi.fn(), release: vi.fn() };
+  }
+
+  it("A5: maps a CasClientError 404 (a collected/missing blob) to content_unavailable", async () => {
+    const { CasClientError } = await import("@unicas/tenant-blob-client");
+    const store = failingStore(new CasClientError(404, "Not Found", "readMetadata"));
+    const database = databaseDouble({ firsts: [snapshotRow] });
+    const repository = new D1TenantVersionRepository(database, store);
+    const error = await repository.readSnapshot(context, "doc-1", 0).catch(caught => caught);
+    expect(error).toBeInstanceOf(TenantOperationError);
+    expect(error).toMatchObject({ code: "content_unavailable" });
+  });
+
+  it("A5: maps snapshot-store.ts's bare size-mismatch Error to content_unavailable", async () => {
+    // Exact message shape thrown by snapshot-store.ts:38-43 when the CAS
+    // blob's actual size no longer matches the version record's declared size.
+    const store = failingStore(new Error("Snapshot blob hash-1 is 12 bytes, but the version record declares 1024"));
+    const database = databaseDouble({ firsts: [snapshotRow] });
+    const repository = new D1TenantVersionRepository(database, store);
+    const error = await repository.readSnapshot(context, "doc-1", 0).catch(caught => caught);
+    expect(error).toBeInstanceOf(TenantOperationError);
+    expect(error).toMatchObject({ code: "content_unavailable" });
+  });
+
+  it("A5: maps a CasClientError 503 (CAS failing, not missing) to unavailable", async () => {
+    const { CasClientError } = await import("@unicas/tenant-blob-client");
+    const store = failingStore(new CasClientError(503, "Service Unavailable", "readMetadata"));
+    const database = databaseDouble({ firsts: [snapshotRow] });
+    const repository = new D1TenantVersionRepository(database, store);
+    const error = await repository.readSnapshot(context, "doc-1", 0).catch(caught => caught);
+    expect(error).toBeInstanceOf(TenantOperationError);
+    expect(error).toMatchObject({ code: "unavailable" });
+  });
+
+  it("A5: maps a network-level failure (CAS unreachable, never got a response) to unavailable", async () => {
+    const store = failingStore(new TypeError("fetch failed"));
+    const database = databaseDouble({ firsts: [snapshotRow] });
+    const repository = new D1TenantVersionRepository(database, store);
+    const error = await repository.readSnapshot(context, "doc-1", 0).catch(caught => caught);
+    expect(error).toBeInstanceOf(TenantOperationError);
+    expect(error).toMatchObject({ code: "unavailable" });
   });
 });
