@@ -598,3 +598,13 @@ TDD。每层都有既定的测试位置：
   类型在 `tenant-portal-webui/src/view/markers.ts`
 - `issueCasCapability` 仅保留契约形状，未落地真实能力签发
 - 生产部署、真实 tenant 身份源、多租户注册
+- 丢失的 `document.created` 无人补救：派发失败或超时，或 Operator 已接受但随后失败
+  （CAS 写入出错、Platform 5xx、连续三次被拒），该文档就永远没有版本 0。§5.4 规定
+  版本 0 之前不可能有任何后续事件，所以 Plan 4 R13「由后续事件吸收」对它不成立。
+  后续可选：读取方发现 `currentVersionIdx === null` 且创建已超过 N 秒时重新派发；
+  webui 提供「重试初始化」，重放创建幂等键；或 Operator 定期扫描未初始化文档
+- 漏掉的 retain 永远不会修复：retain 失败，或 worker 在 D1 提交与 retain 之间退出，
+  已提交版本就指向一个只有 lease 的 blob，可能被 GC 回收，此后读取该 snapshot 永久
+  返回 409。Operator 从不重放已提交的 `submissionId`，所以只靠「重放时补 retain」
+  修不好。后续：按 (tenant, document, versionIdx) 生成确定性的 retain requestId，
+  重放时也执行 retain，并加一个对账器扫描已提交版本补 retain
