@@ -50,10 +50,23 @@ export function createTenantSessionHttp(options: {
       } catch (error) {
         if (!(error instanceof TenantAccessError)) throw error;
         // Only an unauthorized (missing/invalid/expired session) request on a
-        // loopback origin gets auto-issued. A forbidden one - cross-site or a
-        // mismatched origin - is untrusted, and issuing to it would turn the
-        // local-dev convenience into a CSRF amplifier.
-        if (error.code === "unauthorized" && isLocalDevOrigin(origin)) {
+        // loopback origin gets auto-issued, and only when the request also
+        // carries none of the signals authenticateTenant treats as untrusted:
+        // no Authorization header (Bearer never falls back to a cookie, so it
+        // must stay 401, not be upgraded to a fresh session), the request URL
+        // origin matches the configured origin (no DNS rebinding), and the
+        // request is not marked cross-site. Task 3's authenticateTenant checks
+        // Authorization before the origin/cross-site check, so without these
+        // extra checks here an Authorization header on an otherwise-forbidden
+        // request would surface as "unauthorized" and get issued a session -
+        // turning the local-dev convenience into a CSRF/rebinding amplifier.
+        if (
+          error.code === "unauthorized"
+          && isLocalDevOrigin(origin)
+          && request.headers.get("authorization") === null
+          && new URL(request.url).origin === origin
+          && request.headers.get("sec-fetch-site") !== "cross-site"
+        ) {
           const { token, csrfToken } = await store.issue("t-local", "user-local", now());
           const headers = new Headers();
           headers.append("Set-Cookie", sessionCookie(token));

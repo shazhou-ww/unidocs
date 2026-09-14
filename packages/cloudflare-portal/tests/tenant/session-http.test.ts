@@ -83,6 +83,36 @@ describe("GET /portal/auth/session", () => {
     expect(await sessionRows()).toBe(0);
   });
 
+  it("does not issue when an Authorization header is present on loopback", async () => {
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
+      headers: { authorization: "Bearer x" },
+    }), "req-1");
+    expect(response?.status).toBe(401);
+    expect(response!.headers.getSetCookie()).toEqual([]);
+    expect(await sessionRows()).toBe(0);
+  });
+
+  it("does not issue for a mismatched request URL origin even with an Authorization header", async () => {
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const response = await handle(new Request("http://evil.test:8795/portal/auth/session", {
+      headers: { authorization: "Bearer x" },
+    }), "req-1");
+    expect(response?.status).not.toBe(200);
+    expect(response!.headers.getSetCookie()).toEqual([]);
+    expect(await sessionRows()).toBe(0);
+  });
+
+  it("does not issue for a cross-site request even with an Authorization header", async () => {
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
+      headers: { authorization: "Bearer x", "sec-fetch-site": "cross-site" },
+    }), "req-1");
+    expect(response?.status).not.toBe(200);
+    expect(response!.headers.getSetCookie()).toEqual([]);
+    expect(await sessionRows()).toBe(0);
+  });
+
   it("returns null for a path it does not own", async () => {
     const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
     await expect(handle(new Request(`${LOCAL}/api/v1/tenants/t-local/documents`), "req-1")).resolves.toBeNull();
@@ -98,7 +128,14 @@ describe("POST /portal/auth/logout", () => {
       headers: { cookie: `${TENANT_SESSION_COOKIE}=${token}`, "x-csrf-token": csrfToken, origin: LOCAL },
     }), "req-1");
     expect(response?.status).toBe(204);
-    expect(response!.headers.getSetCookie().every(value => value.includes("Max-Age=0"))).toBe(true);
+    const headers = response!.headers.getSetCookie();
+    expect(headers).toHaveLength(2);
+    expect(cookieValue(response!, TENANT_SESSION_COOKIE)).toBe("");
+    expect(cookieValue(response!, TENANT_CSRF_COOKIE)).toBe("");
+    const session = headers.find(value => value.startsWith(`${TENANT_SESSION_COOKIE}=`))!;
+    const csrf = headers.find(value => value.startsWith(`${TENANT_CSRF_COOKIE}=`))!;
+    expect(session).toContain("Max-Age=0");
+    expect(csrf).toContain("Max-Age=0");
     expect(await sessionRows()).toBe(0);
   });
 
