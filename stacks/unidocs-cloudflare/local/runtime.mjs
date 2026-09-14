@@ -422,12 +422,32 @@ function printStructuredLog({ level, message }) {
  * with. Generated per boot, unless the process environment or the service's
  * `.dev.vars` names them — the same precedence the other service bindings
  * follow — so a key someone configured on purpose is not silently replaced.
+ *
+ * In the process environment they are `UNIDOCS_AGENT_API_TOKEN` and
+ * `UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY`, prefixed like
+ * `UNIDOCS_PORTAL_BOOTSTRAP_EMAIL`: that environment is shared with everything
+ * else the developer runs. `.dev.vars` reaches only the portal and keeps the
+ * binding names. A configured key in the wrong shape throws here, naming the
+ * variable and its source but not the value: otherwise the Operator answers
+ * 503 and every validation fails far from the cause.
  */
 export function resolveOperatorSecrets({ processEnv = {}, devVars = {}, random = randomBytes } = {}) {
-  const configured = name => configuredOnly(processEnv)[name] ?? configuredOnly(devVars)[name];
+  const environment = configuredOnly(processEnv);
+  const file = configuredOnly(devVars);
+  const configured = name => {
+    if (environment[`UNIDOCS_${name}`] !== undefined) {
+      return { value: environment[`UNIDOCS_${name}`], source: `UNIDOCS_${name} in the environment` };
+    }
+    if (file[name] !== undefined) return { value: file[name], source: `${name} in .dev.vars` };
+    return undefined;
+  };
+  const key = configured("MARKDOWN_OPERATOR_HMAC_KEY");
+  if (key && !/^[0-9a-f]{64}$/.test(key.value)) {
+    throw new Error(`${key.source} must be 64 lowercase hex characters (32 bytes); unset it to have one generated.`);
+  }
   return {
-    agentToken: configured("AGENT_API_TOKEN") ?? random(32).toString("base64url"),
-    operatorHmacKey: configured("MARKDOWN_OPERATOR_HMAC_KEY") ?? random(32).toString("hex"),
+    agentToken: configured("AGENT_API_TOKEN")?.value ?? random(32).toString("base64url"),
+    operatorHmacKey: key?.value ?? random(32).toString("hex"),
   };
 }
 

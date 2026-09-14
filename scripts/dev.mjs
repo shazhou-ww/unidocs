@@ -295,6 +295,22 @@ if (useAzure) {
     } : {}),
   });
   backend = { name: "Miniflare" };
+
+  // An empty portal database has no document type, so a tenant can create
+  // nothing. The seed registers markdown through the admin API and points the
+  // markdown Operator at it; it is idempotent, so it runs on every boot (the
+  // Operator's document type is not persisted, only the registration is).
+  // Best effort: a failed seed leaves the rest of the stack usable, so it only
+  // warns. Skipped without `mf` — the unit test's stub runtime has none.
+  if (services.includes("portal") && runtime.mf) {
+    try {
+      const { seedPortalCatalog } = await import("../stacks/unidocs-cloudflare/local/portal-seed.mjs");
+      const { documentType } = await seedPortalCatalog(runtime, { log: (line) => console.log(line) });
+      console.log(`Portal catalog: markdown is ${documentType}`);
+    } catch (error) {
+      console.warn(`⚠ Portal seed failed; tenants cannot create markdown documents until it succeeds (restart to retry).\n  ${error.message}`);
+    }
+  }
 }
 
 // 以下两步**两个栈同一条路径** —— 这正是字体登记表下沉成中立契约换来的东西。
