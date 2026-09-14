@@ -27,7 +27,99 @@ import { createAdminMcpAuthorizationTransactions } from "./mcp/authorization-tra
 import { createAdminMcpAuthorization } from "./mcp/authorization.js";
 import { D1AdminMcpMembers } from "./mcp/members.js";
 import { handleAdminMcp } from "./mcp/worker.js";
-import type { AdminContext, AdminMcpScope } from "@unidocs/portal-service";
+import { TenantAccessError, type AdminContext, type AdminMcpScope } from "@unidocs/portal-service";
+import { createPortalCasRuntime } from "./cas-runtime.js";
+import type { SnapshotStore } from "./snapshot-store.js";
+import { D1TenantCatalogRepository } from "./tenant/catalog-repository.js";
+import { D1TenantDocumentRepository } from "./tenant/document-repository.js";
+import { createLocationValidator } from "./tenant/location-validator.js";
+import { authenticateTenant, D1TenantSessionStore } from "./tenant/session.js";
+import { createTenantSessionHttp } from "./tenant/session-http.js";
+import { createTenantHttp } from "./tenant/tenant-http.js";
+import { D1TenantThreadRepository } from "./tenant/thread-repository.js";
+import { D1TenantVersionRepository } from "./tenant/version-repository.js";
+
+function isTenantPath(path: string): boolean {
+  return path === "/portal/auth/session" || path === "/portal/auth/logout" || path.startsWith("/api/v1/tenants/");
+}
+
+/**
+ * Defers building the CAS-backed store until a snapshot is actually read.
+ * `createPortalCasRuntime` throws when a CAS_* binding is missing, and only the
+ * snapshot route needs CAS: built up front, an unconfigured CAS would fail
+ * every authenticated tenant route (this worker has already gone down three times to a
+ * capability built unconditionally on every request). Built here, the failure
+ * surfaces inside `read()`, which the version repository maps to `unavailable`.
+ */
+function lazySnapshotStore(build: () => Promise<SnapshotStore>): SnapshotStore {
+  let store: Promise<SnapshotStore> | undefined;
+  const resolve = () => (store ??= build());
+  return {
+    read: async (ref, signal) => (await resolve()).read(ref, signal),
+    retain: async (ref, requestId) => (await resolve()).retain(ref, requestId),
+    release: async (ref, requestId) => (await resolve()).release(ref, requestId),
+  };
+}
+
+const TENANT_HEADERS = {
+  "Cache-Control": "no-store",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+} as const;
+
+/**
+ * The tenant session endpoints and the tenant API. Every repository here is
+ * cheap and does not throw on construction; CAS is the exception and is lazy.
+ * An unexpected failure is answered here as a tenant error, so it neither
+ * leaks its message (repository errors can carry SQL) nor falls through to
+ * the worker's Administrator-shaped 503.
+ */
+async function serveTenant(request: Request, env: Env, path: string): Promise<Response> {
+  const requestId = crypto.randomUUID();
+  const now = () => Math.floor(Date.now() / 1000);
+  let response: Response;
+  try {
+    const store = new D1TenantSessionStore(env.DB);
+    const session = await createTenantSessionHttp({ origin: env.PORTAL_ORIGIN, store, now })(request, requestId);
+    if (session) {
+      response = session;
+    } else {
+      try {
+        const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store });
+        response = await createTenantHttp({
+          catalog: new D1TenantCatalogRepository(env.DB),
+          documents: new D1TenantDocumentRepository(env.DB),
+          versions: new D1TenantVersionRepository(env.DB, lazySnapshotStore(() => createPortalCasRuntime(env, tenant.tenantId))),
+          threads: new D1TenantThreadRepository(env.DB),
+          validateLocation: createLocationValidator(),
+        })(request, tenant, requestId);
+      } catch (error) {
+        if (!(error instanceof TenantAccessError)) throw error;
+        response = Response.json(
+          { error: { code: error.code, message: error.message, requestId } },
+          { status: error.code === "unauthorized" ? 401 : 403 },
+        );
+      }
+    }
+  } catch (error) {
+    // Name and message only, as bff.ts logs `portal_operation_failed`.
+    console.error(JSON.stringify({
+      event: "portal_operation_failed", requestId, path,
+      name: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error),
+    }));
+    response = Response.json({ error: { code: "internal_error", message: "Tenant operation failed", requestId } }, { status: 500 });
+  }
+  // Rebuilt rather than mutated in place: a Response can carry immutable
+  // headers, and every tenant response must get these regardless of which
+  // handler produced it. `new Headers(...)` keeps each Set-Cookie separate.
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(TENANT_HEADERS)) headers.set(name, value);
+  headers.set("X-Request-ID", requestId);
+  console.log(JSON.stringify({ event: "portal_request", requestId, path, status: response.status }));
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 export default {
   async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
@@ -90,6 +182,10 @@ export default {
         console.log(JSON.stringify({ event: "portal_request", requestId, path: new URL(request.url).pathname, status: tenantUi.status }));
         return tenantUi;
       }
+      // Ahead of the Google settings for the same reason as the tenant UI:
+      // nothing in the tenant data plane needs Google, and a missing client
+      // must not take it down.
+      if (isTenantPath(requestPath)) return await serveTenant(request, env, requestPath);
       const config = portalGoogleConfigFromGateway({
         GATEWAY_OIDC_CLIENT_ID: env.GATEWAY_OIDC_CLIENT_ID,
         GATEWAY_OIDC_CLIENT_SECRET: env.GATEWAY_OIDC_CLIENT_SECRET,

@@ -1,7 +1,8 @@
-import { expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import worker from "../src/worker.js";
 import { ADMIN_MCP_PATHS } from "../src/mcp/dispatcher.js";
 import { hashSessionSecret } from "../src/auth.js";
+import { startRealD1, type RealD1 } from "./tenant/real-d1.js";
 
 test("Worker fails closed before touching D1 when Google credentials are absent", async () => {
   const log = vi.spyOn(console, "error").mockImplementation(() => { });
@@ -163,4 +164,68 @@ test("Worker reports the Markdown Operator as deliberately unconfigured, not a w
   expect(response.status).toBe(503);
   const body = await response.json() as { error: { code: string } };
   expect(body.error.code).toBe("operator_not_configured");
+});
+// The tenant data plane needs neither Google nor CAS (only the snapshot route
+// reads CAS, and only once a version exists). So it must keep serving on an
+// environment with no Google client configured and no CAS bindings at all:
+// routed ahead of the Google settings, with CAS built lazily. Real D1, because
+// the session has to actually round-trip.
+describe("Worker tenant routes without Google or CAS configuration", () => {
+  const ORIGIN = "http://127.0.0.1:19195";
+  let real: RealD1;
+
+  beforeEach(async () => { real = await startRealD1(); });
+  afterEach(async () => { await real.dispose(); });
+
+  function tenantEnv(db: unknown): Env {
+    // Copied by descriptor: spreading would invoke the Operator getters.
+    return Object.defineProperties({}, {
+      ...Object.getOwnPropertyDescriptors(baseEnvWithoutOperatorConfig()),
+      ...Object.getOwnPropertyDescriptors({
+        DB: db,
+        GATEWAY_OIDC_CLIENT_ID: "",
+        GATEWAY_OIDC_CLIENT_SECRET: "",
+        get CAS_ORIGIN(): never { throw new Error("CAS must not be touched"); },
+        get CAS_STACK_ID(): never { throw new Error("CAS must not be touched"); },
+        get CAS_ISSUER(): never { throw new Error("CAS must not be touched"); },
+        get CAS_AUDIENCE(): never { throw new Error("CAS must not be touched"); },
+        get CAS_REF_DOMAIN(): never { throw new Error("CAS must not be touched"); },
+        get CAS_SIGNING_KID(): never { throw new Error("CAS must not be touched"); },
+        get CAS_SIGNING_KEY(): never { throw new Error("CAS must not be touched"); },
+      }),
+    }) as unknown as Env;
+  }
+
+  it("issues a session, serves the API, and 404s a missing snapshot", async () => {
+    const env = tenantEnv(real.db);
+    const session = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`), env);
+    expect(session.status).toBe(200);
+    expect(session.headers.get("Cache-Control")).toBe("no-store");
+    const pair = session.headers.getSetCookie().find(value => value.startsWith("__Host-unidocs_tenant="))!.split(";")[0];
+
+    const list = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, { headers: { cookie: pair } }), env);
+    expect(list.status).toBe(200);
+    await expect(list.json()).resolves.toEqual({ items: [], nextCursor: null });
+
+    const snapshot = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents/doc-missing/versions/0/snapshot`, { headers: { cookie: pair } }), env);
+    expect(snapshot.status).toBe(404);
+    expect(snapshot.headers.get("X-Request-ID")).toMatch(/\S/);
+  });
+
+  it("answers an unexpected failure as a tenant error, without leaking its message", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => { });
+    try {
+      const db = { prepare() { throw new Error("no such table: portal_tenant_sessions"); } };
+      const response = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`), tenantEnv(db));
+      expect(response.status).toBe(500);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(response.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-ancestors 'none'");
+      const body = await response.text();
+      expect(body).toContain("internal_error");
+      expect(body).not.toContain("portal_tenant_sessions");
+      expect(body).not.toContain("Administrator service");
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
