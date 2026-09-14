@@ -1,11 +1,21 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import {
+  DocumentAuditEventSchema,
   DocumentRecordSchema,
+  type DocumentAuditEvent,
   type DocumentRecord,
+  type ListDocumentAuditEventsResponse,
   type ListDocumentsQuery,
   type ListDocumentsResponse,
+  type PaginationQuery,
 } from "@unidocs/protocol-tenant-portal";
-import { TenantOperationError, type DocumentCreateCommand, type TenantContext, type TenantDocumentRepository } from "@unidocs/portal-service";
+import {
+  TenantOperationError,
+  type CurrentVersionMoveCommand,
+  type DocumentCreateCommand,
+  type TenantContext,
+  type TenantDocumentRepository,
+} from "@unidocs/portal-service";
 import { decodeCursor, encodeCursor } from "./cursor.js";
 
 interface DocumentRow {
@@ -22,19 +32,25 @@ interface ReceiptRow {
   readonly response_json: string;
 }
 
+interface AuditRow {
+  readonly audit_event_id: string;
+  readonly actor_id: string;
+  readonly action: string;
+  readonly before_version_idx: number | null;
+  readonly after_version_idx: number | null;
+  readonly reason: string | null;
+  readonly request_id: string;
+  readonly occurred_at: number;
+}
+
 /** Idempotency scope for `create`: matches the operation name Task 2/5 use for their own writes. */
 const CREATE_OPERATION = "createDocument";
 
 /**
  * Persists tenant documents in `portal_documents`, alongside their creation
- * audit event and idempotency receipt.
- *
- * Only `create`, `get` and `list` are implemented here (Task 4). Task 5 adds
- * `moveCurrentVersion` and `listAuditEvents` to this same class, at which
- * point it starts declaring `implements TenantDocumentRepository` in full;
- * until then this type only promises the slice it actually has.
+ * audit event, current-pointer moves, and idempotency receipt.
  */
-export class D1TenantDocumentRepository implements Pick<TenantDocumentRepository, "create" | "get" | "list"> {
+export class D1TenantDocumentRepository implements TenantDocumentRepository {
   constructor(private readonly database: D1Database) {}
 
   /**
@@ -130,6 +146,102 @@ export class D1TenantDocumentRepository implements Pick<TenantDocumentRepository
       : null;
     return { items, nextCursor };
   }
+
+  /**
+   * Moves `current_version_idx` under an equality lock carried by the
+   * command: the UPDATE's WHERE clause itself compares the stored pointer to
+   * `observedCurrentVersionIdx` (with `IS`, since that value is legitimately
+   * `null` before the first version), rather than a preceding SELECT - so
+   * there is no window between checking the pointer and moving it.
+   *
+   * The audit INSERT is guarded by the same fact the UPDATE's WHERE clause
+   * establishes - that `current_version_idx` now equals `targetVersionIdx` -
+   * via a correlated EXISTS, so both statements share one success condition.
+   * A batch is one transaction, but an UPDATE matching zero rows does not
+   * roll it back, so an unconditional audit insert would otherwise record a
+   * move that never happened.
+   *
+   * `meta.changes === 0` on the UPDATE means either the lock or the target
+   * version's existence check failed; both are reported as `version_conflict`
+   * without a following read, since nothing moved.
+   */
+  async moveCurrentVersion(command: CurrentVersionMoveCommand): Promise<DocumentRecord> {
+    const { context, documentId, observedCurrentVersionIdx, targetVersionIdx, audit } = command;
+    const auditOccurredAt = Math.floor(Date.parse(audit.occurredAt) / 1000);
+
+    const results = await this.database.batch([
+      this.database.prepare(
+        `UPDATE portal_documents SET current_version_idx = ?
+         WHERE tenant_id = ? AND document_id = ?
+           AND current_version_idx IS ?
+           AND EXISTS (SELECT 1 FROM portal_versions
+                       WHERE tenant_id = ? AND document_id = ? AND version_idx = ?)`,
+      ).bind(
+        targetVersionIdx, context.tenantId, documentId,
+        observedCurrentVersionIdx,
+        context.tenantId, documentId, targetVersionIdx,
+      ),
+      this.database.prepare(
+        `INSERT INTO portal_document_audit
+           (audit_event_id, tenant_id, document_id, actor_id, action, before_version_idx, after_version_idx, reason, request_id, occurred_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM portal_documents
+                       WHERE tenant_id = ? AND document_id = ? AND current_version_idx = ?)`,
+      ).bind(
+        audit.auditEventId, context.tenantId, documentId, audit.actorId, audit.action,
+        audit.beforeVersionIdx, audit.afterVersionIdx, audit.reason, audit.requestId, auditOccurredAt,
+        context.tenantId, documentId, targetVersionIdx,
+      ),
+    ]);
+
+    const updateResult = results[0];
+    if (!updateResult || updateResult.meta.changes === 0) throw new TenantOperationError("version_conflict");
+
+    const updated = await this.get(context, documentId);
+    if (!updated) throw new TenantOperationError("not_found");
+    return updated;
+  }
+
+  async listAuditEvents(context: TenantContext, documentId: string, query: PaginationQuery): Promise<ListDocumentAuditEventsResponse> {
+    let before: { at: number; id: string } | null = null;
+    if (query.cursor !== undefined) {
+      const key = decodeCursor(query.cursor);
+      if (!key) throw new TenantOperationError("invalid_request");
+      before = key;
+    }
+    const limit = query.limit ?? 25;
+
+    const result = await this.database.prepare(
+      `SELECT audit_event_id, actor_id, action, before_version_idx, after_version_idx, reason, request_id, occurred_at
+       FROM portal_document_audit
+       WHERE tenant_id = ?1 AND document_id = ?2
+         AND (?3 IS NULL OR occurred_at < ?3 OR (occurred_at = ?3 AND audit_event_id < ?4))
+       ORDER BY occurred_at DESC, audit_event_id DESC
+       LIMIT ?5`,
+    ).bind(context.tenantId, documentId, before?.at ?? null, before?.id ?? null, limit + 1).all<AuditRow>();
+
+    const rows = result.results ?? [];
+    const page = rows.slice(0, limit);
+    const items = page.map(row => DocumentAuditEventSchema.parse(projectAudit(row)));
+    const last = page.at(-1);
+    const nextCursor = rows.length > limit && last
+      ? encodeCursor({ at: last.occurred_at, id: last.audit_event_id })
+      : null;
+    return { items, nextCursor };
+  }
+}
+
+function projectAudit(row: AuditRow): DocumentAuditEvent {
+  return {
+    auditEventId: row.audit_event_id,
+    actorId: row.actor_id,
+    action: row.action as DocumentAuditEvent["action"],
+    beforeVersionIdx: row.before_version_idx,
+    afterVersionIdx: row.after_version_idx,
+    reason: row.reason,
+    requestId: row.request_id,
+    occurredAt: new Date(row.occurred_at * 1000).toISOString(),
+  };
 }
 
 function projectDocument(row: DocumentRow): DocumentRecord {

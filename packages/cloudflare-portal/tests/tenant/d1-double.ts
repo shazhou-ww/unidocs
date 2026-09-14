@@ -34,11 +34,20 @@ export interface D1DatabaseDouble extends D1Database {
  * `batchThrows`, when set, makes every `batch()` call throw that error
  * instead of succeeding — used to exercise the "re-read the receipt after a
  * failed batch" path.
+ *
+ * `batchResults` is a queue consumed one entry per `batch()` call, in call
+ * order. Each entry is the `meta.changes` for every statement in that call,
+ * positionally. This is what a lock-in-the-WHERE-clause repository needs to
+ * test both outcomes of an UPDATE...WHERE guard: the double cannot evaluate
+ * SQL, so the test tells it what a real engine would have matched. When the
+ * queue is empty (or an entry omits a position), that statement defaults to
+ * `changes: 1`, preserving prior behaviour for tests that don't care.
  */
 export interface D1DatabaseDoubleOptions<Row extends Record<string, unknown> = Record<string, unknown>> {
   readonly rows?: readonly Row[];
   readonly firsts?: readonly (Record<string, unknown> | null)[];
   readonly batchThrows?: Error;
+  readonly batchResults?: readonly (readonly number[])[];
 }
 
 /**
@@ -57,8 +66,9 @@ export interface D1DatabaseDoubleOptions<Row extends Record<string, unknown> = R
  * decoded cursor was actually bound into the query) can inspect it.
  *
  * Task 4 extended this double with `batch()` support and the `firsts` queue;
- * keep further additions here additive so tasks 5-8 can keep reusing the
- * same double instead of each forking their own.
+ * Task 5 added the `batchResults` queue. Keep further additions here
+ * additive so tasks 6-8 can keep reusing the same double instead of each
+ * forking their own.
  */
 export function databaseDouble<Row extends Record<string, unknown>>(rows: readonly Row[]): D1DatabaseDouble;
 export function databaseDouble<Row extends Record<string, unknown>>(options: D1DatabaseDoubleOptions<Row>): D1DatabaseDouble;
@@ -68,6 +78,7 @@ export function databaseDouble<Row extends Record<string, unknown>>(
   const options: D1DatabaseDoubleOptions<Row> = Array.isArray(arg) ? { rows: arg as readonly Row[] } : (arg as D1DatabaseDoubleOptions<Row>);
   const rows = options.rows ?? [];
   const firsts = [...(options.firsts ?? [])];
+  const batchResults = [...(options.batchResults ?? [])];
   const statements: RecordedStatement[] = [];
   const batchCalls: unknown[][] = [];
   const double = {
@@ -87,7 +98,8 @@ export function databaseDouble<Row extends Record<string, unknown>>(
     batch: async (prepared: unknown[]) => {
       batchCalls.push(prepared);
       if (options.batchThrows) throw options.batchThrows;
-      return prepared.map(() => ({ meta: { changes: 1 } }));
+      const changes = batchResults.length > 0 ? batchResults.shift() : undefined;
+      return prepared.map((_, index) => ({ meta: { changes: changes?.[index] ?? 1 } }));
     },
   };
   return double as unknown as D1DatabaseDouble;

@@ -170,3 +170,132 @@ describe("D1TenantDocumentRepository.list", () => {
     expect(database.statements[0]?.args).not.toContain("markdown");
   });
 });
+
+const moveAudit = (over: Record<string, unknown> = {}) => ({
+  auditEventId: "evt-move-1",
+  actorId: "user-1",
+  action: "current_version.moved" as const,
+  beforeVersionIdx: null,
+  afterVersionIdx: 0,
+  reason: "promote draft",
+  requestId: "req-2",
+  occurredAt: "2026-09-14T00:00:00.000Z",
+  ...over,
+});
+
+const auditRow = (over: Record<string, unknown> = {}) => ({
+  audit_event_id: "evt-1",
+  tenant_id: "t-local",
+  document_id: "doc-1",
+  actor_id: "user-1",
+  action: "current_version.moved",
+  before_version_idx: null,
+  after_version_idx: 0,
+  reason: "promote draft",
+  request_id: "req-2",
+  occurred_at: CREATED_AT_SECONDS,
+  ...over,
+});
+
+describe("D1TenantDocumentRepository.moveCurrentVersion", () => {
+  it("moves the pointer and returns the updated record when the observed value equals the current pointer", async () => {
+    const database = databaseDouble({ firsts: [row({ current_version_idx: 1 })] });
+    const repository = new D1TenantDocumentRepository(database);
+    const updated = await repository.moveCurrentVersion({
+      context, documentId: "doc-1", observedCurrentVersionIdx: 0, targetVersionIdx: 1, audit: moveAudit({ beforeVersionIdx: 0, afterVersionIdx: 1 }),
+    });
+    expect(updated.currentVersionIdx).toBe(1);
+  });
+
+  it("refuses the move when the observed value no longer matches the pointer, leaving no trace of a write", async () => {
+    const database = databaseDouble({ batchResults: [[0, 0]] });
+    const repository = new D1TenantDocumentRepository(database);
+    const error = await repository.moveCurrentVersion({
+      context, documentId: "doc-1", observedCurrentVersionIdx: 1, targetVersionIdx: 2, audit: moveAudit(),
+    }).catch(caught => caught);
+    expect(error).toBeInstanceOf(TenantOperationError);
+    expect(error).toMatchObject({ code: "version_conflict" });
+    // A refused move never follows up with a re-read, as a successful one does:
+    // only the two batched statements were ever sent.
+    expect(database.statements).toHaveLength(2);
+  });
+
+  it("moves the pointer from null to the first version", async () => {
+    const database = databaseDouble({ firsts: [row({ current_version_idx: 0 })] });
+    const repository = new D1TenantDocumentRepository(database);
+    const updated = await repository.moveCurrentVersion({
+      context, documentId: "doc-1", observedCurrentVersionIdx: null, targetVersionIdx: 0, audit: moveAudit(),
+    });
+    expect(updated.currentVersionIdx).toBe(0);
+    // IS, not =, because NULL = NULL is false in SQLite: an = here would make
+    // the very first pointer move - whose observed value is legitimately null -
+    // impossible. No test that only moves from a non-null value would catch this.
+    expect(database.statements[0]?.sql).toContain("IS ?");
+    expect(database.statements[0]?.args).toContain(null);
+  });
+
+  it("refuses the move when the target version does not exist, without pointing current at it", async () => {
+    const database = databaseDouble({ batchResults: [[0, 0]] });
+    const repository = new D1TenantDocumentRepository(database);
+    const error = await repository.moveCurrentVersion({
+      context, documentId: "doc-1", observedCurrentVersionIdx: 0, targetVersionIdx: 99, audit: moveAudit(),
+    }).catch(caught => caught);
+    expect(error).toMatchObject({ code: "version_conflict" });
+    expect(database.statements[0]?.sql).toContain("portal_versions");
+  });
+
+  it("writes the pointer move and its audit event in one batch", async () => {
+    const database = databaseDouble({ firsts: [row({ current_version_idx: 0 })] });
+    const repository = new D1TenantDocumentRepository(database);
+    await repository.moveCurrentVersion({
+      context, documentId: "doc-1", observedCurrentVersionIdx: null, targetVersionIdx: 0, audit: moveAudit(),
+    });
+    expect(database.batchCalls).toHaveLength(1);
+    expect(database.batchCalls[0]).toHaveLength(2);
+  });
+
+  it("guards the audit insert with the same success condition as the update, so a refused move writes no audit row", async () => {
+    const database = databaseDouble({ batchResults: [[0, 0]] });
+    const repository = new D1TenantDocumentRepository(database);
+    await repository.moveCurrentVersion({
+      context, documentId: "doc-1", observedCurrentVersionIdx: 1, targetVersionIdx: 2, audit: moveAudit(),
+    }).catch(() => {});
+    const auditInsert = database.statements[1];
+    expect(auditInsert?.sql).toContain("INSERT INTO portal_document_audit");
+    expect(auditInsert?.sql).toContain("WHERE EXISTS");
+    // The guard's success condition is current_version_idx = targetVersionIdx -
+    // the same fact the UPDATE's WHERE clause establishes - not the observed value.
+    expect(auditInsert?.args).toContain(2);
+  });
+});
+
+describe("D1TenantDocumentRepository.listAuditEvents", () => {
+  it("pages by (occurred_at, audit_event_id) descending", async () => {
+    const database = databaseDouble({
+      rows: [auditRow({ audit_event_id: "evt-2", occurred_at: 2 }), auditRow({ audit_event_id: "evt-1", occurred_at: 1 })],
+    });
+    const repository = new D1TenantDocumentRepository(database);
+    const page = await repository.listAuditEvents(context, "doc-1", { limit: 1 });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.auditEventId).toBe("evt-2");
+    expect(page.nextCursor).not.toBeNull();
+    expect(database.statements[0]?.sql).toContain("ORDER BY occurred_at DESC");
+  });
+
+  it("binds the decoded cursor into the query", async () => {
+    const database = databaseDouble({ rows: [] });
+    const repository = new D1TenantDocumentRepository(database);
+    const { encodeCursor } = await import("../../src/tenant/cursor.js");
+    await repository.listAuditEvents(context, "doc-1", { cursor: encodeCursor({ at: 5, id: "evt-5" }) });
+    expect(database.statements[0]?.args).toContain(5);
+    expect(database.statements[0]?.args).toContain("evt-5");
+  });
+
+  it("does not return another tenant's audit events for the same document id", async () => {
+    const database = databaseDouble({ rows: [] });
+    const repository = new D1TenantDocumentRepository(database);
+    await repository.listAuditEvents({ ...context, tenantId: "t-other" }, "doc-1", {});
+    expect(database.statements[0]?.args).toContain("t-other");
+    expect(database.statements[0]?.args).not.toContain("t-local");
+  });
+});
