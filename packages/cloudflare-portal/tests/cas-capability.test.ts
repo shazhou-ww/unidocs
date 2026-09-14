@@ -23,7 +23,7 @@ describe("createPlatformCasCapability", () => {
     const input = issue.mock.calls[0][0];
     expect(input.tenantId).toBe("t-local");
     expect(input.refDomain).toBe("doc");
-    expect(input.permissions).toContain(casReadPermission("t-local"));
+    expect(input.permissions).toEqual([casReadPermission("t-local")]);
   });
 
   it("never carries a session id, because this is not a user credential", async () => {
