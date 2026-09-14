@@ -101,3 +101,20 @@ test("the scheduled work reads through the platform binding with the agent token
     log.mockRestore();
   }
 });
+
+test("without the Platform and Operator CAS bindings (the deployed v0 config) a signed event is accepted and its work fails in scope, logged", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { scheduled, ctx } = context();
+    // Only the Plan 3 bindings: wrangler.toml deploys no PLATFORM_* or OPERATOR_CAS_*.
+    const response = await markdownOperatorWebhook(await signed(JSON.stringify(event({ reason: "document.created", currentVersionIdx: null }))), env, ctx, () => now);
+    expect(response?.status).toBe(200);
+    expect(await response?.json()).toEqual({ accepted: true, eventId: "evt-1" });
+    await expect(scheduled[0]).resolves.toBeUndefined();
+    expect(log.mock.calls.map(call => JSON.parse(String(call[0])))).toEqual([
+      { event: "markdown_operator_event_failed", eventId: "evt-1", name: "TypeError", message: "Platform bindings are not configured" },
+    ]);
+  } finally {
+    log.mockRestore();
+  }
+});
