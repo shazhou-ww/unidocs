@@ -286,8 +286,12 @@ Agent 接入时有文档可读。
 
 ## 5. 数据模型
 
-新增迁移 `packages/cloudflare-portal/migrations/0005_tenant.sql`。本地 runtime 会自动
+新增迁移 `packages/cloudflare-portal/migrations/0012_tenant.sql`。本地 runtime 会自动
 应用（`services.mjs` 的 `migrations` 字段，经 `splitSqlStatements` 逐条执行）。
+
+**编号随 main 前移**：初稿写的是 `0005_tenant.sql`，但 2026-09-14 rebase 后 main 已经
+占用到 `0011`（view bundles、operator validations、operators、四个 MCP 表），所以 tenant
+迁移落在 `0012`。落地前需再次确认当时的最大编号。
 
 | 表 | 主键 | 说明 |
 | --- | --- | --- |
@@ -509,7 +513,7 @@ TDD。每层都有既定的测试位置：
 2. **CAS 接入层**：Platform 侧 stack-authority capability 签发（带 `refDomain`）、
    snapshot blob 读回与 retain / release 接缝；portal worker 的 CAS binding 与对应的
    `services.mjs`、`runtime.mjs` 改动。**Platform 不写 blob 内容**，写在 Agent 侧
-3. `0005_tenant.sql` 迁移与四个 D1 repository 实现（版本仓储依赖第 2 步）
+3. `0012_tenant.sql` 迁移与四个 D1 repository 实现（版本仓储依赖第 2 步）
 4. Tenant HTTP 适配层与 worker 路由
 5. Tenant session 与本地自动签发
 6. Agent bearer 认证与 submissions 端点
