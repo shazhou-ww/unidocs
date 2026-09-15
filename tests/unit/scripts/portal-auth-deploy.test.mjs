@@ -6,10 +6,11 @@ const settings = { databaseId: "11111111-2222-4333-8444-555555555555", googleCli
 const template = { compatibility_date: "2026-09-10", routes: [{ pattern: "unidocs.shazhou.work/*" }], vars: { UNRELATED_SECRET: "must-not-copy" } };
 
 describe("Portal auth deployment preparation", () => {
-  test("approved production cutover owns only admin routes and a separate database", async () => {
+  test("approved production cutover owns admin and tenant portal routes with a separate database", async () => {
     const config = JSON.parse(await readFile(new URL("../../../packages/cloudflare-portal/wrangler.production.jsonc", import.meta.url), "utf8"));
     expect(config.routes.map(route => route.pattern)).toEqual([
-      "unidocs.shazhou.work/admin", "unidocs.shazhou.work/admin/*", "unidocs.shazhou.work/mcp",
+      "unidocs.shazhou.work/admin", "unidocs.shazhou.work/admin/*", "unidocs.shazhou.work/portal",
+      "unidocs.shazhou.work/portal/*", "unidocs.shazhou.work/mcp",
       "unidocs.shazhou.work/.well-known/oauth-protected-resource/mcp",
       "unidocs.shazhou.work/.well-known/oauth-authorization-server", "unidocs.shazhou.work/oauth/admin-mcp/*",
       "bundles.shazhou.work",

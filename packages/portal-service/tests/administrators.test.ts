@@ -10,6 +10,7 @@ function setup() {
   const repository: AdministratorRepository = {
     add: vi.fn(async command => ({ adminId: command.member.adminId, etag: command.member.etag })),
     remove: vi.fn(async () => undefined),
+    replayRemove: vi.fn(async () => false),
     get: vi.fn(async () => null),
     list: vi.fn(async () => ({ items: [], nextCursor: null })),
   };

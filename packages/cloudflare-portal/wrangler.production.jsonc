@@ -21,6 +21,14 @@
       "zone_name": "shazhou.work"
     },
     {
+      "pattern": "unidocs.shazhou.work/portal",
+      "zone_name": "shazhou.work"
+    },
+    {
+      "pattern": "unidocs.shazhou.work/portal/*",
+      "zone_name": "shazhou.work"
+    },
+    {
       "pattern": "unidocs.shazhou.work/mcp",
       "zone_name": "shazhou.work"
     },

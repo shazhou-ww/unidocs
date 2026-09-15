@@ -6,6 +6,7 @@ function setup() {
   const repository: DocumentTypeRepository = {
     create: vi.fn(async command => ({ documentType: command.registration.documentType, etag: command.registration.etag })),
     update: vi.fn(async command => ({ documentType: command.registration.documentType, etag: command.registration.etag })),
+    replayUpdate: vi.fn(async () => null),
     get: vi.fn(async () => null), list: vi.fn(async () => ({ items: [], nextCursor: null })),
     resolveTypeCardBundle: vi.fn(async () => null), resolveViewBundle: vi.fn(async () => null), resolveOperator: vi.fn(async () => null), listDocumentContractIdxs: vi.fn(async () => []),
   };
@@ -67,9 +68,11 @@ test("leaves the final precondition check to persistence and rejects incomplete 
 
 test("enables only when the selected View and Operator share an existing contract revision", async () => {
   const { repository, service } = setup();
-  const contract = { documentType: "markdown", documentContractIdx: 0, formatVersion: 1 as const,
+  const contract = {
+    documentType: "markdown", documentContractIdx: 0, formatVersion: 1 as const,
     snapshot: { contentType: "application/vnd.unidocs.markdown.snapshot+cbor;version=1", schema: { $schema: "https://schemas.unidocs.dev/svalue/v1" as const }, schemaHash: "sha256:snapshot" },
-    location: { contentType: "application/vnd.unidocs.markdown.location+json;version=1", schema: { $schema: "https://schemas.unidocs.dev/svalue/v1" as const }, schemaHash: "sha256:location" }, contractHash: "sha256:contract", createdAt: "2026-09-09T00:00:00.000Z" };
+    location: { contentType: "application/vnd.unidocs.markdown.location+json;version=1", schema: { $schema: "https://schemas.unidocs.dev/svalue/v1" as const }, schemaHash: "sha256:location" }, contractHash: "sha256:contract", createdAt: "2026-09-09T00:00:00.000Z"
+  };
   const candidateEtag = `"sha256-${"A".repeat(43)}"`;
   const card = { typeCardBundleId: `tb_${"a".repeat(64)}`, bundleUrl: "https://bundles.test/type-card/", name: "Card", description: "", manifest: { protocol: "unidocs-type-card/v1" as const, documentType: "markdown", locales: { en: { name: "Markdown", description: "", sampleThumbnailAlt: "Sample" } }, icon: { kind: "svg" as const, path: "icon.svg" }, sampleThumbnail: "sample.png" }, size: 1, uploadedAt: contract.createdAt, etag: candidateEtag };
   const view = { viewBundleId: `vb_${"b".repeat(64)}`, bundleUrl: "https://bundles.test/view/", name: "View", description: "", manifest: { protocol: "unidocs-view-bundle/v1" as const, documentType: "markdown", entrypoints: { interactive: "view.html", thumbnail: "thumbnail.html" }, supportedDocumentContractIdxs: [0] }, size: 1, uploadedAt: contract.createdAt, etag: candidateEtag };
