@@ -3,20 +3,21 @@
  * topbar/breadcrumb → .home-intro → .filters → .doc-grid，卡片以内容缩略图为主视觉。
  *
  * 与设计稿的差异，都是因为对应能力还没有进 tenant 协议，宁可不渲染也不伪造：
- * tag 筛选、排序、网格/列表切换、作者与更新时间都不出现。
+ * tag 筛选、作者与更新时间都不出现。
  */
 import { useEffect, useMemo, useState } from "react";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { Bot, Plus, Search } from "lucide-react";
+import { Bot, LayoutGrid, List, Plus, Search } from "lucide-react";
 import type { DocumentRecord } from "@unidocs/protocol-tenant-portal";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
 import { useClient } from "../client-context.js";
 import { createDraftStore } from "../drafts/draft-store.js";
+import { errorText } from "../error-text.js";
 import { loadDiscussionSummary, type DiscussionSummary } from "../model/discussion-summary.js";
 import { routeToHash } from "../router.js";
 import { PrivacyNote, Topbar, WorkspaceCrumb } from "../shell/app-shell.js";
-import { CreateDocumentForm } from "./create-document-form.js";
+import { CreateDocumentForm, documentTypeDisplayName } from "./create-document-form.js";
 
 interface Entry {
   readonly document: DocumentRecord;
@@ -35,7 +36,7 @@ function discussionLabel(summary: DiscussionSummary): string {
 /** 缩略图用的正文 HTML，和设计稿一样直接渲染内容本身，不另做占位图。 */
 function thumbnailHtml(content: string): string {
   if (content === "") return "";
-  return DOMPurify.sanitize(marked.parse(content, { async: false }) as string);
+  return DOMPurify.sanitize(marked.parse(content, { async: false }) as string, { FORBID_TAGS: ["a"] });
 }
 
 function excerpt(content: string, length = 65): string {
@@ -43,20 +44,41 @@ function excerpt(content: string, length = 65): string {
   return text.trim().replace(/\s+/g, " ").slice(0, length);
 }
 
-export function WorkbenchPage() {
+export function WorkbenchPage(props: { onDocumentCount?(count: number): void } = {}) {
   const client = useClient();
   const draftStore = useMemo(() => createDraftStore(globalThis.localStorage), []);
   const [entries, setEntries] = useState<readonly Entry[] | null>(null);
   const [keyword, setKeyword] = useState("");
   const [failure, setFailure] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [activeType, setActiveType] = useState("");
+  const [sort, setSort] = useState("recent");
+  const [layout, setLayout] = useState("grid");
+  const [epoch, setEpoch] = useState(0);
+  const [typeNames, setTypeNames] = useState<Readonly<Record<string, string>>>({});
 
   useEffect(() => {
     let cancelled = false;
+    void client.listPublicDocumentTypes().then((page) => {
+      if (!cancelled) setTypeNames(Object.fromEntries(page.items.map((type) => [type.documentType, documentTypeDisplayName(type)])));
+    }).catch(() => { if (!cancelled) setTypeNames({}); });
+    return () => { cancelled = true; };
+  }, [client]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailure(null);
     void (async () => {
       try {
-        const page = await client.listDocuments();
-        const loaded = await Promise.all(page.items.map(async (document) => {
+        const documents: DocumentRecord[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await client.listDocuments({ cursor });
+          if (cancelled) return;
+          documents.push(...page.items);
+          cursor = page.nextCursor ?? undefined;
+        } while (cursor !== undefined);
+        const loaded = await Promise.all(documents.map(async (document) => {
           const summary = await loadDiscussionSummary(client, document.documentId);
           let content = "";
           if (document.currentVersionIdx !== null) {
@@ -65,20 +87,23 @@ export function WorkbenchPage() {
           }
           return { document, summary, content };
         }));
-        if (!cancelled) setEntries(loaded);
+        if (!cancelled) { setEntries(loaded); props.onDocumentCount?.(loaded.length); }
       } catch (cause) {
-        if (!cancelled) setFailure(cause instanceof Error ? cause.message : "加载失败");
+        if (!cancelled) setFailure(errorText(cause));
       }
     })();
     return () => { cancelled = true; };
-  }, [client]);
+  }, [client, epoch, props.onDocumentCount]);
 
   const visible = useMemo(() => {
     if (entries === null) return null;
-    const needle = keyword.trim();
-    if (needle === "") return entries;
-    return entries.filter((entry) => entry.document.name.includes(needle) || entry.content.includes(needle));
-  }, [entries, keyword]);
+    const needle = keyword.trim().toLocaleLowerCase();
+    return entries.filter((entry) => (!activeType || entry.document.documentType === activeType)
+      && `${entry.document.name} ${entry.content}`.toLocaleLowerCase().includes(needle))
+      .sort((left, right) => sort === "title"
+        ? left.document.name.localeCompare(right.document.name, "zh-CN")
+        : right.document.createdAt.localeCompare(left.document.createdAt));
+  }, [entries, keyword, activeType, sort]);
 
   const latest = useMemo(
     () => entries?.flatMap((entry) => entry.summary.latestReply === null
@@ -148,20 +173,31 @@ export function WorkbenchPage() {
                 onChange={(event) => setKeyword(event.target.value)}
               />
             </label>
+            <select aria-label="按类型筛选" value={activeType} onChange={(event) => setActiveType(event.target.value)}>
+              <option value="">所有类型</option>
+              {[...new Set(entries?.map((entry) => entry.document.documentType) ?? [])].map((type) => <option key={type} value={type}>{typeNames[type] ?? type}</option>)}
+            </select>
           </div>
+          <select aria-label="作品排序" value={sort} onChange={(event) => setSort(event.target.value)}><option value="recent">最近创建</option><option value="title">标题排序</option></select>
           <div className="grow" />
+          <div className="segmented" role="group" aria-label="展示方式">
+            <button type="button" className={`icon${layout === "grid" ? " active" : ""}`} title="网格视图" aria-label="网格视图" aria-pressed={layout === "grid"} onClick={() => setLayout("grid")}><LayoutGrid size={15} aria-hidden="true" /></button>
+            <button type="button" className={`icon${layout === "list" ? " active" : ""}`} title="列表视图" aria-label="列表视图" aria-pressed={layout === "list"} onClick={() => setLayout("list")}><List size={15} aria-hidden="true" /></button>
+          </div>
         </div>
 
-        {failure !== null && <p role="alert" className="empty">加载失败：{failure}</p>}
+        {failure !== null && <div className="empty"><p role="alert">加载失败：{failure}</p><button type="button" onClick={() => setEpoch((value) => value + 1)}>重新加载作品</button></div>}
         {visible === null && failure === null && <p className="muted">加载中……</p>}
 
         <div className="section-label">
           <span>{visible === null ? "" : `${visible.length} 件作品`}</span>
         </div>
 
-        {visible !== null && visible.length === 0 && <div className="empty">还没有作品</div>}
+        {visible !== null && visible.length === 0 && <div className="empty">
+          {entries?.length === 0 ? "还没有作品" : <><p>没有匹配的作品</p><button type="button" onClick={() => { setKeyword(""); setActiveType(""); }}>清除筛选</button></>}
+        </div>}
 
-        <ul className="doc-grid" aria-label="作品">
+        <ul className={`doc-grid${layout === "list" ? " list" : ""}`} aria-label="作品">
           {(visible ?? []).map((entry) => {
             const drafts = draftStore.countForDocument(entry.document.documentId);
             return (
@@ -181,7 +217,8 @@ export function WorkbenchPage() {
                       <h2>{entry.document.name}</h2>
                       <div className="description">{excerpt(entry.content)}</div>
                       <div className="row" style={{ gap: 5, marginBottom: 12 }}>
-                        <span className="tag doc-type">MD</span>
+                        <span className="tag doc-type">{typeNames[entry.document.documentType] ?? entry.document.documentType}</span>
+                        <span className="muted">{entry.document.currentVersionIdx === null ? "初始化中" : `v${entry.document.currentVersionIdx}`}</span>
                       </div>
                       <div className="row spread card-meta">
                         <span>{discussionLabel(entry.summary)}</span>

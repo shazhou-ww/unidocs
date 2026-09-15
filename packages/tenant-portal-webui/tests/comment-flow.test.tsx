@@ -155,6 +155,20 @@ describe("评论流程", () => {
     expect(blocks[0]).toHaveTextContent("半截话");
   });
 
+  it("讨论折叠后仍显示未发送草稿且可以丢弃", async () => {
+    const { client, view } = setup("th-open");
+    const discussion = await panel();
+    await userEvent.click(within(discussion).getByRole("button", { name: "回复" }));
+    await userEvent.type(within(discussion).getByRole("textbox", { name: "回复这一处" }), "留在这一处的草稿");
+    await userEvent.click(within(discussion).getByRole("button", { name: "待回复的讨论 · 折叠" }));
+    view.rerender(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    const draft = await within(discussion).findByRole("note", { name: "未发送的评论" });
+    expect(draft).toHaveTextContent("留在这一处的草稿");
+    expect(draft.closest(".collapsed-drafts")).not.toBeNull();
+    await userEvent.click(within(draft).getByRole("button", { name: "丢弃" }));
+    expect(within(discussion).queryByRole("note", { name: "未发送的评论" })).not.toBeInTheDocument();
+  });
+
   it("已发送的评论不可编辑不可删除，只有「修改」", async () => {
     setup("th-open");
     const p = await panel();

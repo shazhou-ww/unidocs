@@ -33,7 +33,7 @@ export function Sidebar(props: { documentCount: number | null }) {
           </div>
           <LockKeyhole size={13} aria-hidden="true" />
         </div>
-        <div className="prototype">本地样例数据 · 未接生产服务</div>
+        {import.meta.env.VITE_TENANT_FIXTURE === "memory" && <div className="prototype">演示工作空间</div>}
       </div>
     </aside>
   );

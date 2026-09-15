@@ -14,9 +14,12 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "我的作品" })).toBeInTheDocument();
   });
 
-  it("窄屏提示页始终在 DOM 里，由 CSS 控制显隐", () => {
+  it("窄屏提示页始终在 DOM 里，由 CSS 控制显隐", async () => {
     renderApp();
+    await screen.findByRole("link", { name: /共创空间 · 发布手记/ });
     expect(screen.getByText("请在电脑或平板上查看")).toBeInTheDocument();
+    expect(screen.getByText("请在电脑或平板上查看").closest("section")).toHaveAttribute("id", "device-notice");
+    expect(screen.getByRole("main").parentElement).toHaveAttribute("id", "app");
   });
 
   it("界面上没有任何编辑内容的入口", async () => {

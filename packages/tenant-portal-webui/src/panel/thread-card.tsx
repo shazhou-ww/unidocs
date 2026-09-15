@@ -79,6 +79,7 @@ export function ThreadCard(props: {
       <button
         type="button"
         onClick={props.onSelect}
+        aria-expanded={props.selected}
         aria-label={`${props.state.open ? "待回复" : "已回复"}的讨论 · ${props.selected ? "折叠" : "展开"}`}
       >
         <span className={props.state.open ? "status-open" : "status-answered"}>
@@ -95,7 +96,7 @@ export function ThreadCard(props: {
               comment={comment}
               currentVersionIdx={props.currentVersionIdx}
               acknowledged={props.state.acknowledgedCommentIdx >= comment.commentIdx}
-              selected={props.selectedCommentIdx === comment.commentIdx}
+              selected={(props.selectedCommentIdx ?? props.comments[props.comments.length - 1]?.commentIdx) === comment.commentIdx}
               onSelect={() => props.onSelectComment?.(comment.commentIdx)}
               onEdit={() => props.onEditComment(comment)}
             />
@@ -135,6 +136,9 @@ export function ThreadCard(props: {
           </li>
         </ul>
       )}
+      {!props.selected && props.drafts.length > 0 && <div className="collapsed-drafts">
+        {props.drafts.map((draft) => <DraftBlock key={draft.draftId} draft={draft} failure={props.draftFailures[draft.draftId] ?? null} onRetry={() => props.onSendDraft(draft)} onDiscard={() => props.onDiscardDraft(draft.draftId)} />)}
+      </div>}
     </article>
   );
 }

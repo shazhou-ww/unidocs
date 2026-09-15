@@ -72,12 +72,87 @@ describe("WorkbenchPage", () => {
     expect(link).toHaveAttribute("href", "#/d/doc-sample");
   });
 
+  it("搜索忽略大小写，无结果时可以清除筛选", async () => {
+    renderPage();
+    await within(grid()).findByRole("link", { name: /UniDocs · 产品构想/ });
+    const search = screen.getByRole("searchbox", { name: "搜索作品" });
+    await userEvent.type(search, "unidocs");
+    expect(within(grid()).getByRole("link", { name: /UniDocs · 产品构想/ })).toBeInTheDocument();
+    await userEvent.type(search, "nonexistent");
+    expect(screen.getByText("没有匹配的作品")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(within(grid()).getAllByRole("link")).toHaveLength(2);
+  });
+
+  it("标题排序与网格、列表视图切换作用于同一作品集合", async () => {
+    renderPage();
+    await within(grid()).findByRole("link", { name: /UniDocs · 产品构想/ });
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "作品排序" }), "title");
+    const titles = within(grid()).getAllByRole("heading").map((heading) => heading.textContent!);
+    expect(titles).toEqual([...titles].sort((left, right) => left.localeCompare(right, "zh-CN")));
+    await userEvent.click(screen.getByRole("button", { name: "列表视图" }));
+    expect(grid()).toHaveClass("list");
+    expect(screen.getByRole("button", { name: "列表视图" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "网格视图" }));
+    expect(grid()).not.toHaveClass("list");
+    expect(within(grid()).getAllByRole("link")).toHaveLength(2);
+  });
+
   it("列表为空时给空态而不是伪造样例", async () => {
     const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: { documents: [] } }) });
     render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
 
     expect(await screen.findByText("还没有作品")).toBeInTheDocument();
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
+  });
+
+  it("类型筛选使用真实类型，未知类型仍能显示和筛选", async () => {
+    const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: { documents: [
+      { documentId: "first", documentType: "dt-markdown", name: "文稿", versions: [], threads: [] },
+      { documentId: "second", documentType: "dt-psd", name: "海报", versions: [], threads: [] },
+    ] } }) });
+    render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
+    await within(grid()).findByRole("link", { name: /海报/ });
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "按类型筛选" }), "dt-psd");
+    expect(within(grid()).getAllByRole("link")).toHaveLength(1);
+    expect(within(grid()).getByRole("link", { name: /海报/ })).toBeInTheDocument();
+    expect(within(grid()).queryByRole("link", { name: /文稿/ })).not.toBeInTheDocument();
+  });
+
+  it("加载失败可以重试，不显示假数据", async () => {
+    const inner = createMemoryTransport({ seed: sampleSeed() });
+    let failNext = true;
+    const transport: PlatformTransport = (request) => {
+      if (failNext && request.path.endsWith("/documents")) {
+        failNext = false;
+        return Promise.resolve({ ok: false, error: { error: { code: "transport_failure", message: "offline", requestId: "r" } } });
+      }
+      return inner(request);
+    };
+    const client = createTenantPortalClient({ tenantId: "t1", transport });
+    render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
+    expect(await screen.findByRole("alert")).toHaveTextContent("网络不通");
+    expect(within(grid()).queryByRole("link")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "重新加载作品" }));
+    expect(await within(grid()).findByRole("link", { name: /UniDocs · 产品构想/ })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("作品列表遍历全部分页后再排序和计数", async () => {
+    const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
+    const documents = await client.listDocuments();
+    const cursors: (string | undefined)[] = [];
+    const paginated = { ...client, listDocuments: async (query: { cursor?: string } = {}) => {
+      cursors.push(query.cursor);
+      return query.cursor === undefined
+        ? { items: [documents.items[0]], nextCursor: "second-page" }
+        : { items: [documents.items[1]], nextCursor: null };
+    } };
+    render(<ClientProvider client={paginated}><WorkbenchPage /></ClientProvider>);
+    await within(grid()).findByRole("link", { name: /UniDocs · 产品构想/ });
+    expect(within(grid()).getAllByRole("link")).toHaveLength(2);
+    expect(cursors).toEqual([undefined, "second-page"]);
+    expect(screen.getByText("2 件作品")).toBeInTheDocument();
   });
 });
 

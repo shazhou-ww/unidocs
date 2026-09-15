@@ -1,8 +1,8 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  createMemoryTransport, createTenantPortalClient, sampleSeed, type PlatformTransport,
+  createMemoryTransport, createTenantPortalClient, sampleSeed, type PlatformRequest, type PlatformTransport,
 } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
 import { DocumentPage } from "../src/pages/document.js";
@@ -17,9 +17,145 @@ function renderPage(props: { threadId?: string; commentIdx?: number } = {}) {
 }
 
 describe("DocumentPage", () => {
+  it("版本历史独立回看，返回后保留选中的讨论", async () => {
+    renderPage({ threadId: "th-answered" });
+    await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
+
+    const history = await screen.findByRole("complementary", { name: "版本历史" });
+    expect(screen.queryByRole("complementary", { name: "讨论" })).not.toBeInTheDocument();
+    await userEvent.click(await within(history).findByRole("button", { name: "查看 v0" }));
+    const preview = await screen.findByRole("region", { name: "历史版本 v0" });
+    await waitFor(() => expect(within(preview).getByText(/这一段写得很绕，回头要换掉。/)).toBeInTheDocument());
+    expect(within(preview).queryByRole("button", { name: "添加评论" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "返回讨论" }));
+    expect(await screen.findByRole("complementary", { name: "讨论" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "评论所基于的版本" })).toBeInTheDocument();
+  });
+
   it("顶栏标出内容只读、由 Agent 编辑", async () => {
     renderPage();
     expect(await screen.findByText("只读 · 内容由 Agent 编辑")).toBeInTheDocument();
+  });
+
+  it("复制链接保留当前讨论定位", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#/d/doc-sample/th-open";
+    renderPage({ threadId: "th-open" });
+    await user.click(await screen.findByRole("button", { name: "复制链接" }));
+    expect(await navigator.clipboard.readText()).toBe(window.location.href);
+    expect(await screen.findByRole("status")).toHaveTextContent("链接已复制");
+  });
+
+  it("下载的文件名与内容来自当前文档版本", async () => {
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:markdown-download");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", class extends URL {
+      static createObjectURL = createObjectURL;
+      static revokeObjectURL = revokeObjectURL;
+    });
+    const clicked: HTMLAnchorElement[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this); });
+    try {
+      renderPage();
+      await userEvent.click(await screen.findByRole("button", { name: "下载 Markdown" }));
+      const anchor = clicked[0];
+      expect(anchor.download).toBe("UniDocs · 产品构想.md");
+      expect(anchor.href).toBe("blob:markdown-download");
+      const blob = createObjectURL.mock.calls[0][0];
+      const content = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.readAsText(blob);
+      });
+      expect(content).toContain("这一节已重写为简明表述。");
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:markdown-download"));
+    } finally {
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("当前版本只可回看，历史展示父版本和评论来源链接", async () => {
+    const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
+    const listVersions = client.listVersions;
+    const withProvenance = {
+      ...client,
+      listVersions: async (...args: Parameters<typeof listVersions>) => {
+        const page = await listVersions(...args);
+        return { ...page, items: page.items.map((version) => version.versionIdx === 2
+          ? { ...version, parentVersionIdx: 0, addressedComments: [{ threadId: "th-answered", commentIdx: 0, baseVersionIdx: 1 }] }
+          : version) };
+      },
+    };
+    render(<ClientProvider client={withProvenance}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
+    await screen.findByRole("region", { name: "历史版本 v2" });
+    expect(screen.queryByRole("button", { name: "设为当前版本" })).not.toBeInTheDocument();
+    const history = screen.getByRole("complementary", { name: "版本历史" });
+    expect((await within(history).findAllByText("基于 v0")).length).toBe(2);
+    expect(within(history).getByRole("link", { name: "评论 1 · 基于 v1" })).toHaveAttribute("href", "#/d/doc-sample/th-answered/0");
+    const sources = within(history).getAllByRole("link");
+    expect(sources.length).toBeGreaterThan(0);
+    expect(sources[0]).toHaveAttribute("href", expect.stringMatching(/^#\/d\/doc-sample\/[^/]+\/\d+$/));
+  });
+
+  it("确认移动 current 时记录原因与观察到的旧 current，成功后加载目标版本", async () => {
+    const inner = createMemoryTransport({ seed: sampleSeed() });
+    const moves: PlatformRequest[] = [];
+    const transport: PlatformTransport = (request) => {
+      if (request.method === "POST" && request.path.endsWith("/current-version")) moves.push(request);
+      return inner(request);
+    };
+    const client = createTenantPortalClient({ tenantId: "t1", transport });
+    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
+    await userEvent.click(await screen.findByRole("button", { name: "查看 v0" }));
+    await userEvent.click(await screen.findByRole("button", { name: "设为当前版本" }));
+    expect(screen.getByRole("button", { name: "确认切换" })).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: "变更原因" }), "保留初版措辞");
+    await userEvent.click(screen.getByRole("button", { name: "确认切换" }));
+    await waitFor(() => expect(moves).toHaveLength(1));
+    expect(moves[0].body).toEqual({ observedCurrentVersionIdx: 2, targetVersionIdx: 0, reason: "保留初版措辞" });
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "版本历史" })).not.toBeInTheDocument());
+    const current = await screen.findByRole("region", { name: "当前版本" });
+    await waitFor(() => expect(within(current).getByText(/这一段写得很绕，回头要换掉。/)).toBeInTheDocument());
+    expect((await client.getDocument("doc-sample")).currentVersionIdx).toBe(0);
+  });
+
+  it("移动 current 失败保留原因和历史阅读，可再次确认", async () => {
+    const inner = createMemoryTransport({ seed: sampleSeed() });
+    const transport: PlatformTransport = (request) => request.method === "POST" && request.path.endsWith("/current-version")
+      ? Promise.resolve({ ok: false, error: { error: { code: "version_conflict", message: "changed", requestId: "r1" } } })
+      : inner(request);
+    const client = createTenantPortalClient({ tenantId: "t1", transport });
+    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
+    await userEvent.click(await screen.findByRole("button", { name: "查看 v0" }));
+    await userEvent.click(await screen.findByRole("button", { name: "设为当前版本" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "变更原因" }), "重新审阅");
+    await userEvent.click(screen.getByRole("button", { name: "确认切换" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("当前版本已经变了");
+    expect(screen.getByRole("textbox", { name: "变更原因" })).toHaveValue("重新审阅");
+    expect(screen.getByRole("region", { name: "历史版本 v0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认切换" })).toBeEnabled();
+  });
+
+  it("历史正文读取失败可重试，失败时不能恢复尚未读到的版本", async () => {
+    let failPreview = true;
+    const inner = createMemoryTransport({ seed: sampleSeed() });
+    const transport: PlatformTransport = (request) => failPreview && request.path.includes("/versions/0/snapshot")
+      ? Promise.resolve({ ok: false, error: { error: { code: "transport_failure", message: "offline", requestId: "r1" } } })
+      : inner(request);
+    const client = createTenantPortalClient({ tenantId: "t1", transport });
+    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
+    await userEvent.click(await screen.findByRole("button", { name: "查看 v0" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("版本加载失败");
+    expect(screen.queryByRole("button", { name: "设为当前版本" })).not.toBeInTheDocument();
+    failPreview = false;
+    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(await screen.findByRole("region", { name: "历史版本 v0" })).toBeInTheDocument();
   });
 
   it("没有选中一处时是单栏 current", async () => {
@@ -94,6 +230,19 @@ describe("DocumentPage", () => {
     await userEvent.click(within(panel).getByText("这一句还能再收紧吗？").closest("button")!);
 
     expect(window.location.hash).toBe("#/d/doc-sample/th-open");
+  });
+
+  it("折叠选中的讨论会退出该处路由", async () => {
+    renderPage({ threadId: "th-open" });
+    await userEvent.click(await screen.findByRole("button", { name: "待回复的讨论 · 折叠" }));
+    expect(window.location.hash).toBe("#/d/doc-sample");
+  });
+
+  it("未发送筛选为空时不误报整个文档没有讨论", async () => {
+    renderPage();
+    const panel = await screen.findByRole("complementary", { name: "讨论" });
+    await userEvent.click(within(panel).getByRole("button", { name: "未发送" }));
+    expect(within(panel).getByText("没有未发送的评论。")).toBeInTheDocument();
   });
 
   // 问题 E：send() 在发送成功后总会调一次 session.reload()。假后端从不让读失败，

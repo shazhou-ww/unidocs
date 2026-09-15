@@ -52,6 +52,7 @@ export function ThreadPanel(props: {
     }
     return filter === "all" || (filter === "open" ? state.open : !state.open);
   });
+  const visibleOrphans = filter === "all" || filter === "unsent" ? props.orphanedDrafts : [];
 
   return (
     <aside className="review-panel open thread-panel" role="complementary" aria-label="讨论">
@@ -75,9 +76,9 @@ export function ThreadPanel(props: {
 
       {props.draftCount > 0 && <p className="draft-count">{props.draftCount} 条未发送</p>}
 
-      {props.orphanedDrafts.length > 0 && (
+      {visibleOrphans.length > 0 && (
         <ul className="orphaned-drafts">
-          {props.orphanedDrafts.map((draft) => (
+          {visibleOrphans.map((draft) => (
             <li key={draft.draftId}>
               <DraftBlock
                 draft={draft}
@@ -90,12 +91,15 @@ export function ThreadPanel(props: {
         </ul>
       )}
 
-      {visible.length === 0 && props.orphanedDrafts.length === 0 && (
+      {visible.length === 0 && visibleOrphans.length === 0 && (
         <p className="muted">
           {props.currentVersionIdx === null
             // 首版本产生前不能评论（§5.4）——不邀请一个注定失败的操作。
             ? "这件作品还没有版本，暂时不能评论。"
-            : "暂无讨论。在正文里选中一段内容即可添加评论。"}
+            : filter === "unsent" ? "没有未发送的评论。"
+              : filter === "open" ? "没有待回复的讨论。"
+                : filter === "answered" ? "还没有已回复的讨论。"
+                  : "暂无讨论。"}
         </p>
       )}
 
