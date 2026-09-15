@@ -1,15 +1,14 @@
 # 租户登录全覆盖 · 设计
 
-日期：2026-09-15。状态：设计已口头确认，书面规格待 review。
-分支：`feat/tenant-login`（基于 `5257ac31`，即 #67 合入后的 main）。
+日期：2026-09-15。状态：两轮 review 意见已并入，开放问题已全部定案（§8）。
+分支：`feat/tenant-login`（已 rebase 到 `9923dbe`，即 #70 合入后的 main）。
 
 本文替换 2026-09-14 的 `tenant-login-design.md` 及其计划。那一版写于 #67
-合入之前，其前提（租户 API 未接入 worker、会话认证不存在）已不成立，
-其 `0012` 迁移号也已被 `0012_tenant.sql` 占用。
+合入之前，其前提（租户 API 未接入 worker、会话认证不存在）已不成立。
 
 ---
 
-## 1. 现状（main @ 5257ac31）
+## 1. 现状（main @ 9923dbe）
 
 以下均为核实过的事实，每条附出处。
 
@@ -23,14 +22,22 @@
 - **两种凭据。** `tenant/session.ts` 的 `authenticateTenant`：
   - 带 `Authorization` 头 → 走 Agent bearer（`tenant/agent-auth.ts`），
     结论终局，被拒绝的 bearer 不会回退到 cookie；
-  - 否则 → cookie `__Host-unidocs_tenant` + D1 `portal_tenant_sessions`，
+  - 否则 → 请求 URL origin 必须等于 `PORTAL_ORIGIN` 且非
+    `sec-fetch-site: cross-site`（**GET 也检查**），再查 cookie
+    `__Host-unidocs_tenant` + D1 `portal_tenant_sessions`；
     非 GET/HEAD/OPTIONS 另要求 `Origin` 同源与 `x-csrf-token`。
 - **bearer 不能写。** `tenant/tenant-http.ts` 每个写 procedure 调
   `forbidBearerWrite`；`tests/tenant/tenant-http-bearer-walk.test.ts`
   遍历 `tenantApiContract` 证明这一点。
-- **授权粒度是租户。** 仓储按 `tenant_id` 过滤；`principalId` 只用于作者
-  字段与幂等收据，没有文档级 ACL。
-- **admin 与 MCP 已有独立认证**，本设计不触碰。
+- **授权粒度是租户。** 路径里的 `tenantId` 与凭据里的必须一致，由每个 handler
+  内调用 `requireTenantScope`（`portal-service/src/tenant/access.ts:74`）保证；
+  仓储按 `tenant_id` 过滤；`principalId` 只用于作者字段与幂等收据，没有文档级 ACL。
+- **admin 与 MCP 已有独立认证**，本设计不触碰其行为。admin 的 Google 登录
+  （`auth-repository.ts` 的 `completeLogin`）是本设计的参照实现：
+  身份经 `googleIdentityFromConfirmedLogin` 校验（要求 `email_verified`，
+  email 经 `normalizeAdministratorEmail` 做 trim + 小写），绑定邀请时用
+  `portal_mutation_guard`（`CHECK valid = 1` + `changes()`）让 0 行更新使整个
+  batch 失败。
 
 ### 1.2 缺的
 
@@ -42,13 +49,33 @@
    `/admin/*`、`/mcp`、两条 `/.well-known/*`、`/oauth/admin-mcp/*` 和
    `bundles.shazhou.work` 路由到 portal；`/portal*` 与
    `/api/v1/tenants/*` 落在 gateway 的 `unidocs.shazhou.work/*` catch-all 上。
-   `worker.ts` 里也有注释明说「Production routes only /admin, /mcp and the
-   OAuth paths to this worker」。
-3. **没有身份到租户的映射。** 所有会话都是 `user-local`；不存在成员表。
-4. **没有覆盖保证。** 现有 walk 测的是 `createTenantHttp` 这一层，而认证发生
+3. **生产缺租户数据面的配置。** `wrangler.production.jsonc` 既没有 `CAS_*`
+   （`cas-runtime.ts` 需要的七项），也没有 `AGENT_API_TOKEN` / `AGENT_TENANT_ID`。
+   仅开路由的话：快照读取返回 unavailable，Markdown Operator 的提交被拒，
+   新建文档永远没有版本。
+4. **没有身份到租户的映射。** 所有会话都是 `user-local`；不存在成员表。
+5. **没有覆盖保证。** 现有 walk 测的是 `createTenantHttp` 这一层，而认证发生
    在它外面的 `serveTenant` 里。测 handler 证明不了「每条路由都被认证门挡住」。
-5. **WebUI 未登录时没有出路。** `tenant-portal-webui/src/main.tsx` 在 401 时
+6. **WebUI 未登录时没有出路。** `tenant-portal-webui/src/main.tsx` 在 401 时
    只渲染「需要登录后才能查看」，没有登录入口，也没有退出入口。
+7. **没有过期数据清理。** 过期的 `portal_tenant_sessions` 与未完成的
+   `portal_login_transactions` 在代码里都没有删除点，worker 也没有 `scheduled`。
+8. **草稿不分身份。** WebUI 草稿存在 `localStorage` 的
+   `unidocs.portal.drafts.v1`（`drafts/draft-store.ts:8`），不带租户与 principal。
+   同一浏览器换人登录会看到前一个人未发送的草稿。
+
+### 1.3 与本设计相关的其他事实
+
+- 迁移 `0012`、`0013`、`0014`（`0014_operator_loop_repair.sql`）均已占用，
+  本设计用 `0015`。
+- WebUI 使用 hash 路由（`tenant-portal-webui/src/router.ts`：
+  `#/d/<documentId>/<threadId>/<commentIdx>`）。hash 不会发给服务端。
+- WebUI 目前**不显示评论作者**（`src` 中没有读取 `authorId` 的地方），
+  也不存在 principal → email/名字的查询途径。
+- 外壳 `index.html` 以 `Cache-Control: no-store` 返回，带哈希的资源为
+  `immutable`（`static-assets.ts` 的 `assetResponse`）。
+- bundle 路径必须带 64 位十六进制摘要
+  （`bundle-ingress.ts:42`：`(tb|vb)_[0-9a-f]{64}`）。
 
 ---
 
@@ -57,18 +84,25 @@
 **目标**
 
 - G1 租户面每一个 API 都要求真实身份（用户会话或 Agent bearer）。
-- G2 生产上用户能用 Google 登录获得会话。
-- G3 身份映射到租户与 principal；被移出名单的人下一个请求就失去访问。
-- G4 有一条随契约与生产路由表**自动增长**的测试守门：新增路由若未被认证覆盖，
-  测试变红，无需任何人记得去更新清单。
+- G2 生产上用户能用 Google 登录获得会话，并能看到、编辑真实数据。
+- G3 身份映射到租户与 principal；被移出名单或被强制下线的人，**下一个 Platform
+  API 请求**即失去访问。例外：此前已签发的直连 UniCAS capability JWT
+  （`POST …/cas-capabilities`）在其自身有效期内仍可用，这是本设计接受的残留窗口。
+- G4 守门测试随**契约**与**生产路由表**自动增长：
+  - 契约新增 procedure 而未补 fixture → T1 变红；
+  - 生产配置新增 route 而未归类 → T2 变红。
+  G4 **不**承诺发现「已有通配 route 下新增的路径」；这一类由 T2 的兜底样例
+  （未知路径必须 404 无体）与代码评审共同覆盖。
 
 **非目标**
 
-- Agent 凭据改造（仍为共享 token，生产未配置即全部拒绝）。
+- Agent 凭据改造（仍为共享 token；本轮只在生产配置它，见 §6）。
 - gateway 主站（`/ui/*`、`/tenants/*`）的登录体系。
 - 成员管理的后台页面。
 - 文档级 ACL；租户内全可见保持不变。
 - 一人多租户与租户切换。
+- 评论作者的显示名。
+- 登录端点的限流（见 §7 风险）。
 
 ---
 
@@ -83,20 +117,36 @@
 | Agent API | `agentApiContract.submissions` 2 个 procedure | bearer | 不变，纳入遍历测试 |
 | 会话端点 | `GET /portal/auth/session`、`POST /portal/auth/logout` | 会话 | loopback 自动签发改为显式开关 |
 | 登录端点 | `GET /portal/auth/login`、`GET /portal/auth/callback` | **公开**（登录本身不能先要求登录） | 新增 |
-| WebUI 外壳 | `/portal`、`/portal/`、`/portal/index.html`、`/portal/assets/*` | **公开**（外壳不含数据，数据全部经 API） | 加登录/退出入口 |
+| WebUI 外壳 | `GET/HEAD` `/portal`、`/portal/`、`/portal/index.html`、`/portal/assets/*` | **公开** | 加登录/退出入口 |
 | admin API | `/admin/api/v1/*` | 管理员会话 | 新增 `tenant-members`，自动落在现有门后 |
-| bundles | `bundles.shazhou.work/*` | **公开**（内容寻址的静态代码） | 不变 |
+| bundles | `bundles.shazhou.work/*` | **公开**（摘要不可猜测的静态代码） | 不变 |
 | admin / MCP 其余 | `/admin*`、`/mcp`、OAuth 路径 | 既有 | 不变 |
 
-**关于「外壳公开」**：外壳是编译进 worker 的静态 HTML/JS，与 `/admin/login`
-同性质。服务端给外壳加门需要每次读 D1，且挡不住任何数据（数据只经 API）。
-因此外壳公开，门在 API 上。
+**为什么外壳公开。** admin 对受保护页面是在服务端设门的
+（`isProtectedAdminWebUiPath` → 303 `/admin/login`），租户面不照搬，理由按分量排：
+
+1. **hash 路由决定了门只能在前端之后。** 服务端看不到 `#/d/…`。服务端设门时，
+   未登录访问深链接会被 303 到登录，回来只能落到首页。只有外壳先加载、由前端读
+   `location.hash` 拼进 `returnTo`，被分享的「某文档某条评论」的链接才能在登录后
+   还原。
+2. 外壳是编译进 worker 的静态资源，不含数据；数据全部经 API，门在 API 上。
+3. 服务端设门需要每次加载外壳都读 D1。
+
+公开外壳须守住的约束（T2 与 T3 各有断言）：
+
+- 租户 UI 资源中不得出现数据、fixture 或本地身份值（`t-local`、`user-local`）。
+- 前端不得依据 cookie 是否存在渲染「已登录」，登录态只以
+  `/portal/auth/session` 的响应为准（现状 `session/bootstrap.ts` 已如此）。
+- `index.html` 保持 `no-store`（现状如此），使登录入口上线后立即生效。
+
+**为什么 bundles 可以公开。** 前提是 bundle 只含类型卡与视图的代码和静态资源，
+**不含任何租户数据**。若以后允许 bundle 携带示例文档等内容，此条需重新评审。
 
 ---
 
 ## 4. 设计
 
-### 4.1 数据：`packages/cloudflare-portal/migrations/0014_tenant_members.sql`
+### 4.1 数据：`packages/cloudflare-portal/migrations/0015_tenant_members.sql`
 
 ```sql
 CREATE TABLE portal_tenant_members (
@@ -137,19 +187,25 @@ CREATE TABLE portal_tenant_auth_audit (
   request_id TEXT NOT NULL
 );
 
-CREATE INDEX portal_tenant_session_principal ON portal_tenant_sessions(tenant_id, principal_id);
+CREATE INDEX portal_tenant_session_principal ON portal_tenant_sessions(tenant_id, principal_id, created_at);
 ```
 
 要点：
 
 - **`portal_tenant_sessions` 不改结构。** 它已有 `tenant_id` 与
   `principal_id`，与成员表经 `(tenant_id, principal_id)` 关联；只补一个索引，
-  供停用成员时按 principal 删会话。
+  供按成员删会话与按成员保留最新 N 条会话。
 - **`principal_id` 在邀请时生成**，形如 `user:<uuid>`，此后不变。
   `IdSchema` 是 `NonEmptyStringSchema`，允许冒号；`agent:markdown-primary`
   已是同样形状。
+- **成员行永不删除。** 停用只置 `active = 0`。principal → email / subject 的
+  历史因此始终可查，为以后的作者显示与身份续接（§8 Q2 方案 C）留数据。
 - **一人一租户**由两条全局唯一索引保证，因此登录时无需选择租户。
-  以后支持多租户时，要把这两条索引改为按 `tenant_id` 分区，并在登录后加租户选择。
+- **email 一律规范化后入库**（与 `normalizeAdministratorEmail` 同规则，见 4.5）。
+  两条唯一索引按字节比较，入库前不规范化就会允许大小写不同的重复邀请。
+- **登录事务单独建表**，不复用 admin 的 `portal_login_transactions`：两个面的
+  事务互不可见，一个面发起的 state 无法在另一个面完成。
+- 会话、登录事务、审计的写入都在 worker 请求内完成；清理策略见 4.3。
 
 ### 4.2 每个请求校验成员状态
 
@@ -164,7 +220,7 @@ WHERE session.session_hash = ? AND session.created_at <= ? AND session.expires_a
 ```
 
 - 成员被停用：会话仍在表里也查不到，**下一个请求即 401**。
-- 停用操作同时删除该成员的全部会话（同一 batch），不留僵尸行。
+- 停用与强制下线（4.5）都在同一 batch 里删除该成员的全部会话，不留残留行。
 - bearer 路径不变，不查成员表（Agent 不是成员）。
 - 开发会话（4.4）同样必须有成员行，没有特例分支。
 
@@ -181,6 +237,8 @@ WHERE session.session_hash = ? AND session.created_at <= ? AND session.expires_a
    `${origin}/admin/auth/callback`，`createGoogleLogin` 又断言它等于
    `${origin}${surface.callbackPath}`。从 `PortalGoogleConfig` 删掉
    `redirectUri`，由 `createGoogleLogin` 按 surface 自算。
+   `mcp/authorization.ts` 与 `mcp/authorization-transactions.ts` 里的
+   `redirectUri` 是 MCP OAuth 客户端的回调，与 `PortalGoogleConfig` 无关，不动。
 
 admin 行为不变，由 `tests/google-login.test.ts` 与 `tests/google-config.test.ts`
 守回归。
@@ -194,40 +252,78 @@ admin 行为不变，由 `tests/google-login.test.ts` 与 `tests/google-config.t
 | 登录事务 cookie | `__Host-unidocs_tenant_login` |
 | 会话 / CSRF cookie | 沿用 `__Host-unidocs_tenant` / `__Host-unidocs_tenant_csrf` |
 | 默认 returnTo | `/portal/` |
-| returnTo 校验 | 必须以 `/portal/` 开头；拒绝 `/portal/auth/` 下的路径、`..`、百分号编码的路径段、控制字符与反斜杠、超过 2048 字节 |
+| returnTo 校验 | 与 `portalReturnPath` 同构：原值不超过 2048 字节、以 `/portal/` 开头、不含反斜杠与控制字符及空格；解码后的 pathname 仍以 `/portal/` 开头、不在 `/portal/auth` 或 `/portal/auth/` 下、不含 `%`、没有 `.` / `..` 段。search 与 hash 原样保留。 |
 
-**callback 算法**（步骤 1–3 只读；步骤 4–6 的全部写入在同一个 D1 batch 内提交，
-任一失败则什么都不写，不会留下指向未绑定成员的会话）：
+`/portal` 与 `/portal/index.html` 不在服务端放宽，由 WebUI 在拼 `returnTo` 时
+统一规范化为 `/portal/`（4.6）。
+
+**begin 算法**
+
+1. 删除已过期的登录事务，单次有界：
+   `DELETE FROM portal_tenant_login_transactions WHERE rowid IN
+   (SELECT rowid FROM portal_tenant_login_transactions WHERE expires_at <= ? LIMIT 100)`。
+   表的行数因此以「10 分钟内发起的登录数」为上限。
+2. 交给 `createGoogleLogin.begin`。
+
+**callback 算法**
+
+callback 请求来自 accounts.google.com 的顶层跳转，天然带
+`sec-fetch-site: cross-site`。**callback 不得调用 `authenticateTenant`**
+（包括「若已登录则直接跳回」这类优化），否则会被跨站检查拒绝。
+
+读取阶段：
 
 1. `createGoogleLogin.complete` 验证 state、PKCE、nonce、签名与 claims，
-   得到 Google 身份。
-2. 要求 Google 登录确认在 5 分钟内（复用 `requireRecentAuthentication`）。
+   得到 Google 身份（email 已规范化）。
+2. 要求 Google 登录确认在 5 分钟内（复用 `requireRecentAuthentication`；
+   `googleIdentityFromConfirmedLogin` 以完成时刻为确认时间）。
 3. 按活跃的 `(issuer, subject)` 找成员；找到即为已绑定成员。
 4. 否则按活跃且未绑定的 `email` 找邀请行；要求确认时间不早于邀请的
    `created_at`（沿用 admin 的防护：阻止邀请之前签发的身份去认领邀请）。
-   找到则写入 `issuer` / `subject`，`revision + 1`，审计 `member.bound`。
 5. 两者都没有 → 拒绝（见下）。**没有自助开户。**
-6. 签发会话行，审计 `session.created`，303 回 `returnTo`，
-   同时下发会话 cookie、CSRF cookie，并清除登录事务 cookie。
 
-**同一成员允许多个会话**（多设备）。新登录不踢掉旧会话。
+写入阶段（一个 D1 batch，**每一步都以 `portal_mutation_guard` 断言**，
+0 行更新使整个 batch 失败，参照 `auth-repository.ts` 的 `completeLogin`）：
 
-**失败处理**
+6. 若是邀请行：
+   `UPDATE … SET issuer, subject, revision = revision + 1, updated_at
+   WHERE member_id = ? AND email = ? AND active = 1 AND subject IS NULL
+   AND revision = ? AND created_at <= ?`，随后 guard；审计 `member.bound`。
+7. 断言成员此刻仍活跃且身份一致：
+   `INSERT INTO portal_mutation_guard SELECT CASE WHEN EXISTS
+   (SELECT 1 FROM portal_tenant_members WHERE member_id = ? AND issuer = ?
+   AND subject = ? AND active = 1) THEN 1 ELSE 0 END`，随后清空 guard。
+   这一步使「登录与 remove 并发」时整个 batch 失败，不会插入指向已停用成员的会话。
+8. 删除该成员已过期的会话；再删除该成员除最新 9 条之外的会话，
+   使加上本次后至多 **10 条**。
+9. 插入会话行，审计 `session.created`。
+
+batch 失败（并发 remove、并发绑定导致 revision 不符）→ 按「其他异常」处理。
+
+成功后 303 回 `returnTo`，同时下发会话 cookie、CSRF cookie，并清除登录事务 cookie。
+
+**同一成员允许多个会话**（多设备），上限 10 条，超出时淘汰最旧的。
+新登录不踢掉其余会话。
+
+**失败处理**（begin 与 callback 都是浏览器顶层导航，失败一律 303 回外壳，
+不返回 JSON）
 
 | 情况 | 响应 |
 |---|---|
-| 不在名单 / 身份不符 | 303 `/portal/?login=denied&requestId=…` |
+| 不在名单 / 身份不符 / 邀请早于确认时间 | 303 `/portal/?login=denied&requestId=…` |
+| begin 参数无效（returnTo 被拒、重复参数） | 303 `/portal/?login=failed&requestId=…` |
 | Google 往返校验失败 | 303 `/portal/?login=failed&requestId=…`，日志 `tenant_google_login_failed`，只记 `stage` / `reason` |
-| 其他异常 | 303 `/portal/?login=failed&requestId=…`，日志 `tenant_operation_failed`，只记 `name` / `message` |
+| Google 配置缺失 | 303 `/portal/?login=unavailable&requestId=…`，日志 `tenant_login_not_configured` |
+| 其他异常（含 batch 失败） | 303 `/portal/?login=failed&requestId=…`，日志 `tenant_operation_failed`，只记 `name` / `message` |
 
+所有失败响应在 callback 路径上都清除登录事务 cookie。
 日志纪律与 `bff.ts` 一致：**绝不记录** stack、error 对象、token 或 client secret。
 
 **路由接入**：`worker.ts` 的 `isTenantPath` 增加 `/portal/auth/login` 与
 `/portal/auth/callback`，让两个登录端点与会话端点走同一个 `serveTenant` 出口
-（同一套安全响应头与 `portal_request` 日志）。Google 配置只在这两个路径上读取。
-
-**Google 配置缺失时**：登录端点返回 503 `login_not_configured`；租户 API 与外壳
-照常服务。保留 `worker.ts` 现有的性质「缺 Google client 不应拖垮租户数据面」。
+（同一套安全响应头与 `portal_request` 日志）。Google 配置只在这两个路径上读取，
+缺失时租户 API 与外壳照常服务，保留 `worker.ts` 现有的性质
+「缺 Google client 不应拖垮租户数据面」。
 
 ### 4.4 本地免登录开关
 
@@ -235,22 +331,34 @@ admin 行为不变，由 `tests/google-login.test.ts` 与 `tests/google-config.t
 
 - `env.PORTAL_TENANT_DEV_SESSION === "true"`；
 - `isLocalDevOrigin(env.PORTAL_ORIGIN)`；
+- 请求**完全不带** `__Host-unidocs_tenant` cookie（带了但无效——过期、被撤销、
+  成员已停用——一律 401，不被悄悄换成开发会话）；
 - 现有的三条：请求无 `Authorization`、请求 URL origin 与配置一致、
   非 `sec-fetch-site: cross-site`。
 
 开关为 true 但 origin 不是 loopback 时：不签发，并记一次
 `tenant_dev_session_ignored` 警告。
 
-签发时先 upsert 开发成员行
-`(tenant_id='t-local', principal_id='user-local', email='dev@unidocs.local',
-issuer='local-dev', subject='user-local', added_by='dev-session')`，
+签发时在同一 batch 里先 upsert 开发成员行，再插会话：
+
+```sql
+INSERT INTO portal_tenant_members
+  (member_id, tenant_id, principal_id, email, issuer, subject, active, added_by, created_at, updated_at)
+VALUES ('member-local-dev', 't-local', 'user-local', 'dev@unidocs.local', 'local-dev', 'user-local', 1, 'dev-session', ?, ?)
+ON CONFLICT (member_id) DO UPDATE SET active = 1, updated_at = excluded.updated_at
+```
+
 使开发会话通过 4.2 的成员校验。`t-local` 与
 `stacks/unidocs-cloudflare/local/runtime.mjs` 的 `LOCAL_AGENT_TENANT_ID` 一致，
-本地 Operator 回路因此照常工作。
+本地 Operator 回路因此照常工作。开发会话**不写审计**。
+
+**已知行为**：开关打开时「退出」只结束当前会话并清掉 cookie；WebUI 下一次探测
+会话时请求不带 cookie，会立刻得到新的开发会话。要在本地测试真实登录与退出，
+须关闭开关。`.dev.vars.example` 写明这一点。
 
 **默认关闭。** 生产 wrangler 配置中不声明该变量。
 
-对测试与脚本的影响（已逐个核实引用 `/portal/auth/session` 的集成测试）：
+对测试与脚本的影响（已逐个核实引用 `/portal/auth/session` 的测试）：
 
 | 文件 | 处理 |
 |---|---|
@@ -258,8 +366,10 @@ issuer='local-dev', subject='user-local', added_by='dev-session')`，
 | `tests/integration/cloudflare/portal-operator-loop.test.mjs` | 同上 |
 | `tests/integration/cloudflare/portal-local-runtime.test.mjs` | 同上 |
 | `tests/integration/cloudflare/portal-seed.test.mjs` | 同上 |
+| `packages/cloudflare-portal/tests/worker.test.ts`（223、340、360、376 行附近依赖自动签发） | env 打开开关；另补「开关关闭时 401」的对照 |
+| `packages/cloudflare-portal/tests/tenant/session-http.test.ts` | 按新的条件组合重写自动签发用例 |
 | `stacks/unidocs-cloudflare/local/runtime.mjs` | `startLocalRuntime` 新增 `tenantDevSession` 选项，映射到该 binding |
-| `packages/cloudflare-portal/.dev.vars.example` | 增加注释说明该开关 |
+| `packages/cloudflare-portal/.dev.vars.example` | 增加开关说明与「开关打开时退出无效」 |
 
 `portal-cas.test.mjs` 只引用了 `t-local` 常量，不依赖自动签发，不需要改动。
 
@@ -272,12 +382,23 @@ issuer='local-dev', subject='user-local', added_by='dev-session')`，
 | `list` | `GET /admin/api/v1/tenant-members?tenantId=&cursor=&limit=` | 仅活跃成员；`tenantId` 可选 |
 | `add` | `POST /admin/api/v1/tenant-members` | body `{ tenantId, email }`；必须带 `Idempotency-Key`；返回 `{ memberId, principalId, etag }` |
 | `remove` | `DELETE /admin/api/v1/tenant-members/{memberId}` | 必须带 `If-Match` 与 `Idempotency-Key`；置 `active=0` 并删除其全部会话 |
+| `revokeSessions` | `POST /admin/api/v1/tenant-members/{memberId}/session-revocations` | 必须带 `Idempotency-Key`；删除该成员全部会话，成员保持活跃。用于怀疑账号被盗但不想停用（停用再加入会换 principal，见 §8 Q2）。 |
 
+- **email 规范化**：`add` 先按 `normalizeAdministratorEmail` 同一规则
+  （trim + 小写 + 同一 schema）规范化再查重、入库。实现上把该函数提到
+  `portal-service` 里一个不带 admin 字样的名字（如 `normalizeGoogleEmail`），
+  admin 与租户共用，避免两处规则漂移。
+- **原子性**：`remove` 与 `revokeSessions` 的写入各在一个 batch 内，
+  以 `portal_mutation_guard` 断言目标成员行的状态（`remove` 断言 revision 与 ETag
+  一致；`revokeSessions` 断言成员活跃），失败时什么都不写。
 - 错误码：`invalid_request` 400、`not_found` 404、`idempotency_conflict` 409、
   `tenant_member_exists` 409（该 email 已是某租户的活跃成员）、
   `precondition_failed` 412、缺 `If-Match` 为 428。
+- 幂等收据沿用 `portal_idempotency_receipts`，operation 分别为
+  `addTenantMember`、`removeTenantMember`、`revokeTenantMemberSessions`。
 - 审计：`AdminAuditActionSchema` 增加 `tenant_member.added`、
-  `tenant_member.removed`；`AdminAuditResourceTypeSchema` 增加 `tenant_member`。
+  `tenant_member.removed`、`tenant_member.sessions_revoked`；
+  `AdminAuditResourceTypeSchema` 增加 `tenant_member`。
 - 分层照 `administrators`：service 在 `portal-service/src/admin/tenant-members.ts`，
   D1 仓储 `cloudflare-portal/src/tenant-members-repository.ts`，
   HTTP `cloudflare-portal/src/tenant-members-http.ts`，
@@ -286,45 +407,80 @@ issuer='local-dev', subject='user-local', added_by='dev-session')`，
   与 `administrators` 同样要求管理员会话、写操作要求 CSRF。
 
 **重新加入同一个 email**：`remove` 之后再 `add` 会生成新的 `member_id` 与
-**新的 `principal_id`**。此人之前写的评论仍归属旧 principal。
-（见 §8 开放问题 Q2。）
+**新的 `principal_id`**（§8 Q2 定案）。旧成员行保留为停用状态。
 
 **seed**：`stacks/unidocs-cloudflare/local/portal-seed.mjs` 在注册 markdown 类型
-之后，通过该 API 把 `PORTAL_BOOTSTRAP_EMAIL`（若已配置）加入 `t-local`，
-使 `pnpm dev portal` 起来后可以直接走真实登录。已是成员时视为成功（幂等）。
+之后，用它已有的管理员会话（`adminClient`）调用该 API，把
+`PORTAL_BOOTSTRAP_EMAIL`（若已配置）加入 `t-local`，使 `pnpm dev portal`
+起来后可以直接走真实登录。409 `tenant_member_exists` 视为成功（幂等）。
 
 ### 4.6 WebUI（`packages/tenant-portal-webui`）
 
+**登录入口**
+
 - 未登录提示页增加「使用 Google 账号登录」链接，指向
-  `/portal/auth/login?returnTo=<当前 pathname + hash>`。
-  hash 路由的位置因此在登录后得以保留。
-- 读取 `?login=denied` / `?login=failed`，分别显示「这个账号还没有加入工作区」/
-  「登录没有完成，请重试」，并显示 `requestId`；展示后用 `history.replaceState`
-  去掉这两个参数，避免刷新重复提示。
+  `/portal/auth/login?returnTo=<encodeURIComponent(规范化 pathname + hash)>`。
+- 规范化：pathname 为 `/portal` 或 `/portal/index.html` 时改为 `/portal/`；
+  其余不以 `/portal/` 开头的情况一律用 `/portal/`。hash 原样保留，
+  深链接的位置因此在登录后得以还原。
+- 读取 `?login=denied` / `?login=failed` / `?login=unavailable`，分别显示
+  「这个账号还没有加入工作区」/「登录没有完成，请重试」/「登录暂不可用，请稍后再试」，
+  并显示 `requestId`；展示后用 `history.replaceState` 去掉 `login` 与
+  `requestId` 参数（保留 hash），避免刷新重复提示。
+
+**退出**
+
 - 侧边栏增加「退出」：`POST /portal/auth/logout`，带 `x-csrf-token`
   （复用现有 `readCsrfCookie`），完成后回到未登录提示页。
+- 退出请求得到 401（会话已过期或已被撤销）时同样视为已退出，回到未登录提示页。
+
+**会话过期**
+
 - `withSessionRefresh` 不变：会话过期时它重新探测一次，拿不回来就交给
   `onSignedOut`，现在 `onSignedOut` 展示的是带登录入口的页面。
-- 改动后重新生成 `packages/cloudflare-portal/src/tenant-ui-assets.generated.ts`。
+- 草稿在 localStorage，跳转登录再回来不丢字。
 
-### 4.7 生产路由
+**草稿按身份隔离**
 
-`packages/cloudflare-portal/wrangler.production.jsonc` 的 `routes` 增加：
+- 存储 key 改为 `unidocs.portal.drafts.v2:<tenantId>:<principalId>`，
+  `createDraftStore` 接收 `{ tenantId, principalId }`，取自已登录会话。
+- 退出**不清草稿**：key 已隔离，下一个人看不到；本人再登录后恢复。
+- 旧 key `unidocs.portal.drafts.v1`：生产此前没有租户面，只可能存在于本地开发环境。
+  首次以某个身份加载时把其中草稿并入该身份的 key，并删除旧 key。
+
+改动后重新生成 `packages/cloudflare-portal/src/tenant-ui-assets.generated.ts`。
+
+### 4.7 生产配置
+
+**路由。** `packages/cloudflare-portal/wrangler.production.jsonc` 的 `routes` 增加：
 
 - `unidocs.shazhou.work/portal`
 - `unidocs.shazhou.work/portal/*`
 - `unidocs.shazhou.work/api/v1/tenants/*`
 
 Cloudflare 以更具体的路由优先，这三条从 gateway 的 catch-all 中划出。gateway
-使用的前缀是 `/admin/api/v1`（gateway 自有 admin，与 portal 的 `/admin*` 路由
-早已并存）、`/ui/*`、`/tenants/*`，与新增三条无重叠。
+（`packages/cloudflare-gateway/wrangler.toml`）另有的具体路由是 `/tenants/*`、
+`/ui/*` 与 unicas 域上的 OAuth 路径，与新增三条无重叠。
 
-同时删除 `worker.ts` 中「Production routes only /admin, /mcp and the OAuth paths」
-那句已过期的注释，以及 `serveTenantWebUi` 注释中「tenant plane has no login yet」。
+**数据面配置**（§1.2 第 3 条）。本轮上线的前提是租户数据面在生产可用：
+
+- `vars` 增加 `AGENT_TENANT_ID`（等于首个上线租户的 id）与 `CAS_ORIGIN`、
+  `CAS_STACK_ID`、`CAS_ISSUER`、`CAS_AUDIENCE`、`CAS_REF_DOMAIN`、`CAS_SIGNING_KID`；
+- `secrets.required` 增加 `AGENT_API_TOKEN` 与 `CAS_SIGNING_KEY`；
+- 生产 markdown worker 的 `PLATFORM_AGENT_TOKEN` 设为同一 token。
+
+因为 `AGENT_TENANT_ID` 只有一个，本轮生产**只开一个租户**；Operator 只为这个租户
+工作。多租户与 Agent 凭据改造一起做，不在本轮。
+
+**注释。** `worker.ts:248-250` 那段注释改写而不是删除：`/` 在生产上仍归 gateway，
+「根路径跳转只在本地生效」的结论依然成立，只是理由从「生产只路由 admin、MCP 与
+OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
+「the tenant UI has no login to gate it with」改为指向 §3 外壳公开的理由。
+`tests/worker.test.ts:127` 的同类注释一并更新。
 
 ### 4.8 守门测试
 
-这是本设计 G4 的落点，也是 review 最应该挑剔的部分。
+这是本设计 G4 的落点。
 
 **T1 契约遍历：`packages/cloudflare-portal/tests/tenant/auth-coverage-walk.test.ts`**
 
@@ -332,100 +488,193 @@ Cloudflare 以更具体的路由优先，这三条从 gateway 的 catch-all 中�
   使请求经过 `serveTenant` 里真正的认证点。
 - 被遍历的 procedure 集合 = `tenantApiContract` ∪ `agentApiContract` 的全部 procedure，
   从契约对象里递归读出，不手写。
-- 每个 procedure 用一个能通过输入校验的 fixture（沿用 bearer walk 的写法：
-  否则 400 会掩盖缺失的门）。
+- **预置数据**：`beforeAll` 在本租户建好 fixture 引用的文档、版本、线程与评论，
+  另建一个租户的活跃成员及其会话、一个已停用成员及其（残留）会话。
+  没有这些数据，读接口的对照组会得到 404，无法与「门缺失」区分。
+- 每个 procedure 用一个能通过输入校验、指向预置数据的 fixture
+  （沿用 bearer walk 的写法：否则 400 会掩盖缺失的门）。
 - 对 `tenantApiContract` 的每个 procedure 断言：
   1. 无任何凭据 → **401**；
-  2. 另一租户成员的有效会话 → **403**（`requireTenantScope`）；
+  2. **另一租户成员的有效会话 → 403**。这是本组里唯一依赖 handler 自身检查
+     （`requireTenantScope`）的断言，也是逐 procedure 遍历最有价值的一条：
+     新 handler 漏掉 scope 检查，只有它能发现；
   3. 已停用成员的会话 → **401**（4.2）；
   4. 有效会话但 `sec-fetch-site: cross-site` → **403**；
   5. 非 GET：有效会话但缺 `x-csrf-token` → **403**；
   6. 对照组：本租户活跃成员的有效会话 → **不是** 400/401/403/404
      （证明上面的拒绝来自门，而不是 fixture 无效）。
+
+  第 1、3、4、5 条在 `serveTenant` 进入路由前就判定，与具体路径无关；逐 procedure
+  执行它们证明的是「该路径确实进入了 `serveTenant`」。
 - 对 `agentApiContract` 的每个 procedure 断言：无凭据 → **401**；
   本租户活跃成员的有效用户会话 → **403** `forbidden`
-  （`tenant/agent-http.ts:189`：非 bearer 一律拒绝）；
+  （`tenant/agent-http.ts:183`：非 bearer 一律拒绝）；
   对照组：有效 bearer → 不是 400/401/403/404。
+- 写操作的对照组会触发 `onCommitted` 派发与 retention sweep；测试不传
+  ExecutionContext，派发会启动但不被等待，且不会 reject（`worker.ts` 的
+  `inBackground`），不影响断言。
 - **完整性断言**：被断言的 procedure 数量 = 两份契约 procedure 总数；
   fixture 表的键集合 = 契约 procedure 路径集合。契约新增 procedure 而未补
   fixture，测试直接失败。
 
 **T2 生产路由遍历：`packages/cloudflare-portal/tests/production-routes-auth.test.ts`**
 
-- 解析 `wrangler.production.jsonc` 的 `routes` 与 `vars`（去注释后 `JSON.parse`）。
+- 用 `jsonc-parser`（锁文件里已有 3.3.1，但只是传递依赖；需加为
+  `cloudflare-portal` 的 devDependency）解析 `wrangler.production.jsonc` 的
+  `routes` 与 `vars`，解析错误即测试失败。**不得**用正则去注释：文件里的
+  `https://…` 字符串含 `//`。
 - **env 取生产 `vars`**，再补上测试用的 D1 / KV / R2 binding 与 secrets 占位。
   这一点是必须的：本地 `wrangler.jsonc` 里 `MCP_ENABLED` 是 `"false"`，
   所有 MCP 路径返回 404；生产是 `"true"`，匿名 `/mcp` 应得到 401。
   用本地 vars 跑出来的结论对生产无效。
-- 每条 route 展开为代表路径：精确路由取其本身；`/*` 路由取前缀下的
-  一组样例（`/portal/*` 取 `/portal/`、`/portal/auth/session`；
-  `/api/v1/tenants/*` 取契约里每条路径代入样例参数）。
-- 以匿名请求打 `worker.fetch`，期望结果属于以下之一：
+- **传入 ExecutionContext 替身**：`worker.ts:201` 在 MCP 路径上没有 context 会抛错，
+  被外层兜成 503。
+- **替换全局 `fetch`**：`/portal/auth/login` 与 `/admin/auth/login` 的 begin 会先请求
+  Google 的 discovery 文档，测试不得访问真实网络。替身对 Google 的三个固定 URL
+  返回合法元数据，其余 URL 抛错。
+- 每条 route 展开为代表样例（`方法 + 路径`）：
+  - 精确 route 取其本身；
+  - `/*` route 取前缀下的一组已知路径：`/portal/*` 取
+    `isTenantWebUiPath` 与 `isTenantPath` 覆盖的全部固定路径；
+    `/api/v1/tenants/*` 取契约里每条路径代入样例参数、配契约里的方法；
+    `/admin/*` 与 `/oauth/admin-mcp/*` 取 bff 方法表与 `ADMIN_MCP_PATHS` 中的路径；
+  - **每个 `/*` route 另加一个随机未知路径**（如 `/portal/__probe_<uuid>`）。
+- 匿名请求（**不带 `Origin`、不带任何 cookie 与 `Authorization`**）打 `worker.fetch`，
+  期望结果属于以下之一：
   - 401 / 403；
-  - 303 且 `Location` 指向登录页；
-  - 命中测试文件内的**显式公开白名单**。
+  - 303 且 `Location` 的 pathname 恰为 `/admin/login`、`/admin/auth/login`、
+    `/portal/auth/login` 或 `/portal/`（后者仅限带 `login=` 参数的登录失败回跳），
+    查询参数不限；
+  - 随机未知路径：404 且响应体为空；
+  - 命中测试文件内的**显式公开白名单**（按 `方法 + 路径`）。
+
+  不带 `Origin` 是有意的：匿名 `POST /admin/auth/logout` 若带同源 `Origin`，
+  会得到清除 cookie 的 204（`bff.ts:88`），不属于数据泄漏，但会让结论随请求头变化。
 - 公开白名单（全部写在测试里，改动需评审）：
-  `/portal`、`/portal/`、`/portal/index.html`、`/portal/assets/*`、
-  `/portal/auth/login`、`/portal/auth/callback`、`/admin/login`、
-  `/admin/access-denied`、`/admin/assets/*`、`/admin/auth/login`、
-  `/admin/auth/callback`、`/.well-known/oauth-protected-resource/mcp`、
-  `/.well-known/oauth-authorization-server`、`/oauth/admin-mcp/*`、
-  `bundles.shazhou.work/*`。
+
+  | 方法 | 路径 | 断言 |
+  |---|---|---|
+  | GET、HEAD | `/portal`、`/portal/`、`/portal/index.html` | 200，`Content-Type: text/html` |
+  | GET、HEAD | `/portal/assets/*`（取构建产物中的实际文件） | 200 |
+  | GET | `/portal/auth/login` | 303 到 accounts.google.com |
+  | GET | `/portal/auth/callback` | 303 到 `/portal/?login=failed…` |
+  | GET | `/admin/login`、`/admin/access-denied` | 200（bff 方法表只允许 GET） |
+  | GET | `/admin/assets/*`（取构建产物中的实际文件） | 200 |
+  | GET | `/admin/auth/login` | 303 到 accounts.google.com |
+  | GET | `/admin/auth/callback` | 非 2xx，非 5xx |
+  | GET | `/.well-known/oauth-protected-resource/mcp`、`/.well-known/oauth-authorization-server` | 200 JSON |
+  | POST | `/oauth/admin-mcp/register`、`/oauth/admin-mcp/token`、`/oauth/admin-mcp/revoke` | 非 5xx |
+  | GET | `bundles.shazhou.work/(type-card-bundles\|view-bundles)/<id>/<path>` | 200 或 404 |
+
+  白名单不含通配的 `/oauth/admin-mcp/*`：该前缀下新增的路径必须显式归类。
+  `/oauth/admin-mcp/authorize` 不在白名单里，匿名访问应 303 到
+  `/admin/auth/login`（`mcp/authorization.ts:58`），落在上面的跳转预期中。
+- **公开外壳约束**：对 `/portal/index.html` 与全部 `/portal/assets/*` 的响应体断言
+  不含 `t-local`、`user-local`、`dev@unidocs.local`。
 - **完整性断言**：每条 route 至少产生一个样例；出现未被样例覆盖的 route
   则失败。今后在生产配置里加路由而没想清楚它的认证，这里会变红。
 
-**T3 其余单测**：成员绑定 / 拒绝 / 确认时效；callback 各失败分支的 303 目标；
-returnTo 校验；开关四种组合；`tenant-members` 的幂等、ETag、审计、
-「停用即删会话」；WebUI 的登录链接 returnTo、`?login=` 提示与退出。
+**T3 其余单测**
+
+- 成员绑定 / 拒绝 / 确认时效；邀请 email 大小写与 Google email 大小写不同时仍能绑定。
+- **并发**：绑定 batch 执行前成员被 remove → batch 失败、无会话行、303 `login=failed`；
+  两次并发绑定同一邀请 → 至多一次成功。
+- 会话上限：第 11 次登录后该成员恰有 10 条会话，被淘汰的是最旧的；过期会话被清理。
+- begin 清理过期登录事务，单次至多 100 条。
+- callback 各失败分支的 303 目标与日志字段；callback 带 `sec-fetch-site: cross-site`
+  时正常完成。
+- returnTo 校验的接受与拒绝样例。
+- 开关的条件组合：开关 × loopback × 是否带 cookie。
+- `tenant-members`：email 规范化、幂等、ETag、审计、「停用即删会话」、
+  `revokeSessions` 删会话但成员仍可再次登录、停用行不被删除。
+- WebUI：登录链接的 returnTo 规范化（`/portal`、`/portal/index.html`、带 hash）、
+  三种 `?login=` 提示与参数清除、退出（含 401 视为已退出）、
+  草稿按身份隔离与 v1 迁移。
 
 ### 4.9 可观测
 
 - 所有租户响应沿用 `serveTenant` 已设置的 `Cache-Control: no-store`、
   `X-Content-Type-Options`、`Referrer-Policy`、`Content-Security-Policy`、
   `X-Request-ID`。登录端点纳入 `serveTenant` 同一出口，不另起一套。
-- 新增日志事件：`tenant_google_login_failed`、`tenant_dev_session_ignored`。
-  `portal_request` 行照旧记录每个请求的 path 与 status。
+- 新增日志事件：`tenant_google_login_failed`、`tenant_login_not_configured`、
+  `tenant_dev_session_ignored`。`portal_request` 行照旧记录每个请求的 path 与 status。
 
 ---
 
 ## 5. 迁移与兼容
 
 - **生产**：此前没有租户路由，因此没有租户数据、没有租户会话，
-  上线不需要数据迁移。上线顺序：应用迁移 → 部署 worker（含新路由）→
-  用 admin API 邀请第一个成员 → 该成员登录。
+  上线不需要数据迁移。上线顺序见 §6。
 - **本地已有数据**：作者为 `user-local` 的文档与评论保留。打开开关后开发会话
   仍是 `user-local`，与旧数据一致；用真实 Google 登录则是新的 principal，
-  能看到同租户的全部文档（租户内全可见），但作者显示为另一个人。
+  能看到同租户的全部文档（租户内全可见）。评论的 `author_id` 归属不同 principal，
+  目前 WebUI 不显示作者，界面上看不出差别。
+- **本地草稿**：v1 草稿在首次加载时并入当前身份（4.6）。
 - **`pnpm dev portal` 行为变化**：默认不再自动登录。开发者要么配置
   `PORTAL_BOOTSTRAP_EMAIL` 并走真实登录（seed 已将其加为成员），要么在
   `.dev.vars` 打开开关。`docs/deployment-and-local-configuration.md` 需同步说明。
 
 ## 6. 外部前提（需人工完成）
 
+按顺序：
+
 1. Google Cloud Console 为 `GATEWAY_OIDC_CLIENT_ID` 增加授权回调：
    `https://unidocs.shazhou.work/portal/auth/callback`，以及本地 dev 的 loopback
    回调地址。**不加则 callback 必定失败。**
-2. 部署前执行 `wrangler d1 migrations apply`（`wrangler deploy` 不会自动应用）。
-3. 用 admin API 邀请第一位租户成员。
+2. 为首个租户准备 UniCAS：确定 `CAS_*` 各值，`wrangler secret put CAS_SIGNING_KEY`。
+3. 生成 Agent token：portal `wrangler secret put AGENT_API_TOKEN`，生产 markdown
+   worker 的 `PLATFORM_AGENT_TOKEN` 设为同一值。
+4. 执行 `wrangler d1 migrations apply`（`wrangler deploy` 不会自动应用）。
+5. 部署 markdown worker，再部署 portal worker（含新路由与新 vars）。
+6. 用 admin API 邀请第一位租户成员。
+7. 该成员登录，创建文档，确认 Operator 产出首个版本。
 
 ## 7. 风险
 
 | 风险 | 缓解 |
 |---|---|
-| 新增生产路由从 gateway catch-all 抢走路径 | 已核对 gateway 前缀无重叠；上线后抽查 `/ui/*`、`/tenants/*` |
+| 新增生产路由从 gateway catch-all 抢走路径 | 已核对 gateway 具体路由无重叠；上线后抽查 `/ui/*`、`/tenants/*` |
 | 改 `PortalGoogleConfig` 形状牵动 admin 登录 | 先改并跑通 admin 登录测试，再动租户 |
 | 默认关闭开关改变本地开发习惯 | seed 自动加成员；`.dev.vars.example` 与部署文档写明 |
-| T2 解析 jsonc 过于脆弱 | 只去除 `//` 行注释与块注释；解析失败即测试失败，不静默跳过 |
-| 每请求多一次 JOIN | 走主键与新增的 `(tenant_id, principal_id)` 索引 |
+| 每请求多一次 JOIN | 走会话主键与 `(tenant_id, principal_id)` 索引 |
+| 登录 begin 是匿名写 D1 的端点，可被刷 | 事务表以「10 分钟内的 begin 数」为上限（4.3 清理）；admin 的 `/admin/auth/login` 同样如此。需要时在 Cloudflare 上对两个 begin 路径加限流规则，不在本轮代码范围 |
+| 会话 cookie 被盗 | 固定 8 小时有效期；管理员可 `revokeSessions`；每成员至多 10 条会话 |
+| 停用后直连 UniCAS 的 capability JWT 仍有效 | 属 G3 声明的残留窗口，长度等于该 JWT 的有效期 |
+| 本轮生产只支持一个租户 | 由单一 `AGENT_TENANT_ID` 决定，已写入 §4.7；多租户与 Agent 凭据改造一并做 |
 
-## 8. 待 review 确认的开放问题
+## 8. 开放问题的定案
 
-- **Q1 一人一租户。** 两条全局唯一索引简化了登录，但以后要支持多租户，
-  需要改索引并在登录后加租户选择。是否接受？
-- **Q2 重新加入后换 principal。** remove 后再 add 会产生新的 `principal_id`，
-  历史评论不再归属此人。备选：`add` 遇到同一租户下已停用的同 email 行时复活原行，
-  保留 principal。当前设计选「换新」，理由是停用可能意味着账号易主。
-- **Q3 多会话。** 允许同一成员多设备同时登录；停用成员时一并清除。
-  是否需要「新登录踢掉旧会话」？
-- **Q4 外壳公开。** 外壳不设服务端门，理由见 §3。是否接受？
-- **Q5 T2 的公开白名单**是否完整、是否有不该公开的条目？
+- **Q1 一人一租户：接受。** 两条全局唯一索引简化了登录。以后支持多租户时，
+  把这两条索引改为按 `tenant_id` 分区，并在登录后加租户选择。
+
+- **Q2 重新加入后换 principal：接受「换新」（方案 A）。**
+  - 考虑过的方案 B「`add` 时按 email 复活停用行」被否决：
+    1. email 与人不是一一对应，Workspace 回收邮箱后发给新人，新人会继承前任的作者身份；
+    2. 复活会让登录与 remove 并发时残留的会话行重新生效（虽然 4.3 的 guard 已阻止
+       产生这类行，但不应让安全性依赖单一防线）。
+  - 以后若要历史连续，走方案 C「按 Google 身份续接」：`add` 仍新建行，**绑定时**
+    若同租户有停用行的 `(issuer, subject)` 相同，则沿用其 `principal_id`。为此：
+    成员行永不删除（4.1，已做）；届时把 `portal_tenant_member_principal` 改为
+    `WHERE active = 1` 的部分唯一索引。
+  - 眼下影响有限：WebUI 不显示作者，影响只在 `author_id` 的数据归属。
+
+- **Q3 多会话：允许，但加三项约束。**
+  1. 每成员至多 10 条会话，登录时淘汰最旧的并清理过期的（4.3）；
+  2. 管理员可 `revokeSessions` 强制下线而不停用（4.5）；
+  3. 草稿按 `tenantId:principalId` 隔离，共用电脑换人登录看不到前一个人的草稿（4.6）。
+
+  不采用「新登录踢掉旧会话」：租户用户多设备并用是常态；8 小时固定有效期已为被盗
+  cookie 设了上限。
+
+- **Q4 外壳公开：接受。** 决定性理由是 hash 路由（§3）：服务端设门会让深链接在
+  登录后丢失位置。约束（不含数据、登录态以 API 为准、`index.html` 不缓存）写入 §3，
+  由 T2 断言。
+
+- **Q5 T2 公开白名单：已修订（4.8）。**
+  1. 白名单按「方法 + 路径」列出，并对每项给出具体断言；
+  2. `/oauth/admin-mcp/*` 收窄为 `register`、`token`、`revoke` 三个精确路径，
+     `authorize` 移出白名单（它应跳转登录）；
+  3. bundles 保留，前提「bundle 不含租户数据」写入 §3；
+  4. 跳转登录的 `Location` 精确到 pathname；
+  5. 匿名请求不带 `Origin`，避开 admin 退出接口的 204 特例；
+  6. 每个通配 route 另测一个随机未知路径，必须 404 无体。
