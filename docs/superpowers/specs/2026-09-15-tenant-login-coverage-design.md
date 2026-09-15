@@ -86,13 +86,15 @@
 - G1 租户面每一个 API 都要求真实身份（用户会话或 Agent bearer）。
 - G2 生产上用户能用 Google 登录获得会话，并能看到、编辑真实数据。
 - G3 身份映射到租户与 principal；被移出名单或被强制下线的人，**下一个 Platform
-  API 请求**即失去访问。例外：此前已签发的直连 UniCAS capability JWT
-  （`POST …/cas-capabilities`）在其自身有效期内仍可用，这是本设计接受的残留窗口。
+  API 请求**即失去访问。注意：v0 的 `POST …/cas-capabilities` 固定返回 503
+  （`tenant-http.ts` 的 `cas.issueCapability`），当前不存在可残留的直连 UniCAS
+  凭据；将来开放签发时，已签发 JWT 在其有效期内仍可用，届时须在该功能的设计里
+  声明这段残留窗口。
 - G4 守门测试随**契约**与**生产路由表**自动增长：
   - 契约新增 procedure 而未补 fixture → T1 变红；
   - 生产配置新增 route 而未归类 → T2 变红。
   G4 **不**承诺发现「已有通配 route 下新增的路径」；这一类由 T2 的兜底样例
-  （未知路径必须 404 无体）与代码评审共同覆盖。
+  （未知路径必须 404 无体，认证先于路由的面为 401）与代码评审共同覆盖。
 
 **非目标**
 
@@ -252,7 +254,7 @@ admin 行为不变，由 `tests/google-login.test.ts` 与 `tests/google-config.t
 | 登录事务 cookie | `__Host-unidocs_tenant_login` |
 | 会话 / CSRF cookie | 沿用 `__Host-unidocs_tenant` / `__Host-unidocs_tenant_csrf` |
 | 默认 returnTo | `/portal/` |
-| returnTo 校验 | 与 `portalReturnPath` 同构：原值不超过 2048 字节、以 `/portal/` 开头、不含反斜杠与控制字符及空格；解码后的 pathname 仍以 `/portal/` 开头、不在 `/portal/auth` 或 `/portal/auth/` 下、不含 `%`、没有 `.` / `..` 段。search 与 hash 原样保留。 |
+| returnTo 校验 | 与 `portalReturnPath` 同构（抽出共用函数）：原值不超过 2048 个字符、以 `/portal/` 开头、不含反斜杠与控制字符及空格；解码后的 pathname 仍以 `/portal/` 开头、不在 `/portal/auth` 或 `/portal/auth/` 下、不含 `%`、没有 `.` / `..` 段。search 与 hash 原样保留。 |
 
 `/portal` 与 `/portal/index.html` 不在服务端放宽，由 WebUI 在拼 `returnTo` 时
 统一规范化为 `/portal/`（4.6）。
@@ -467,7 +469,11 @@ Cloudflare 以更具体的路由优先，这三条从 gateway 的 catch-all 中�
 - `vars` 增加 `AGENT_TENANT_ID`（等于首个上线租户的 id）与 `CAS_ORIGIN`、
   `CAS_STACK_ID`、`CAS_ISSUER`、`CAS_AUDIENCE`、`CAS_REF_DOMAIN`、`CAS_SIGNING_KID`；
 - `secrets.required` 增加 `AGENT_API_TOKEN` 与 `CAS_SIGNING_KEY`；
-- 生产 markdown worker 的 `PLATFORM_AGENT_TOKEN` 设为同一 token。
+- 生产 markdown worker（`packages/cloudflare-markdown/wrangler.toml` 注释写明 v0 故意
+  未部署这些）补齐 Operator 回路：`PLATFORM_SERVICE` service binding 指向
+  `unidocs-portal`、`PLATFORM_ORIGIN`、`PLATFORM_AGENT_TOKEN`（与 portal 的
+  `AGENT_API_TOKEN` 同值）与 `OPERATOR_CAS_*`（Operator 以 Agent 身份写快照的
+  UniCAS 凭据）。
 
 因为 `AGENT_TENANT_ID` 只有一个，本轮生产**只开一个租户**；Operator 只为这个租户
 工作。多租户与 Agent 凭据改造一起做，不在本轮。
@@ -545,7 +551,8 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
   - 303 且 `Location` 的 pathname 恰为 `/admin/login`、`/admin/auth/login`、
     `/portal/auth/login` 或 `/portal/`（后者仅限带 `login=` 参数的登录失败回跳），
     查询参数不限；
-  - 随机未知路径：404 且响应体为空；
+  - 随机未知路径：404 且响应体为空；认证先于路由的面（`/api/v1/tenants/*`）
+    为 401；
   - 命中测试文件内的**显式公开白名单**（按 `方法 + 路径`）。
 
   不带 `Origin` 是有意的：匿名 `POST /admin/auth/logout` 若带同源 `Origin`，
@@ -563,12 +570,14 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
   | GET | `/admin/auth/login` | 303 到 accounts.google.com |
   | GET | `/admin/auth/callback` | 非 2xx，非 5xx |
   | GET | `/.well-known/oauth-protected-resource/mcp`、`/.well-known/oauth-authorization-server` | 200 JSON |
-  | POST | `/oauth/admin-mcp/register`、`/oauth/admin-mcp/token`、`/oauth/admin-mcp/revoke` | 非 5xx |
+  | POST | `/oauth/admin-mcp/register`、`/oauth/admin-mcp/token`、`/oauth/admin-mcp/revoke` | 4xx（匿名、无合法 OAuth 参数） |
+  | GET | `/oauth/admin-mcp/authorize` | 400（无合法 OAuth 参数时在查会话之前就拒绝） |
   | GET | `bundles.shazhou.work/(type-card-bundles\|view-bundles)/<id>/<path>` | 200 或 404 |
 
   白名单不含通配的 `/oauth/admin-mcp/*`：该前缀下新增的路径必须显式归类。
-  `/oauth/admin-mcp/authorize` 不在白名单里，匿名访问应 303 到
-  `/admin/auth/login`（`mcp/authorization.ts:58`），落在上面的跳转预期中。
+  `/oauth/admin-mcp/authorize` 只有携带合法 OAuth 参数、且没有管理员会话时才会
+  303 到 `/admin/auth/login`（`mcp/authorization.ts:58`）；T2 发出的裸请求在解析
+  OAuth 参数时就被 400 拒绝，因此按 400 列出。
 - **公开外壳约束**：对 `/portal/index.html` 与全部 `/portal/assets/*` 的响应体断言
   不含 `t-local`、`user-local`、`dev@unidocs.local`。
 - **完整性断言**：每条 route 至少产生一个样例；出现未被样例覆盖的 route
@@ -623,7 +632,8 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
    回调地址。**不加则 callback 必定失败。**
 2. 为首个租户准备 UniCAS：确定 `CAS_*` 各值，`wrangler secret put CAS_SIGNING_KEY`。
 3. 生成 Agent token：portal `wrangler secret put AGENT_API_TOKEN`，生产 markdown
-   worker 的 `PLATFORM_AGENT_TOKEN` 设为同一值。
+   worker 的 `PLATFORM_AGENT_TOKEN` 设为同一值；为 markdown worker 准备
+   `OPERATOR_CAS_*`。
 4. 执行 `wrangler d1 migrations apply`（`wrangler deploy` 不会自动应用）。
 5. 部署 markdown worker，再部署 portal worker（含新路由与新 vars）。
 6. 用 admin API 邀请第一位租户成员。
@@ -639,7 +649,7 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
 | 每请求多一次 JOIN | 走会话主键与 `(tenant_id, principal_id)` 索引 |
 | 登录 begin 是匿名写 D1 的端点，可被刷 | 事务表以「10 分钟内的 begin 数」为上限（4.3 清理）；admin 的 `/admin/auth/login` 同样如此。需要时在 Cloudflare 上对两个 begin 路径加限流规则，不在本轮代码范围 |
 | 会话 cookie 被盗 | 固定 8 小时有效期；管理员可 `revokeSessions`；每成员至多 10 条会话 |
-| 停用后直连 UniCAS 的 capability JWT 仍有效 | 属 G3 声明的残留窗口，长度等于该 JWT 的有效期 |
+| 将来开放直连 UniCAS capability 后，停用成员的 JWT 在有效期内仍可用 | v0 不签发（固定 503）；开放签发的设计须声明该窗口 |
 | 本轮生产只支持一个租户 | 由单一 `AGENT_TENANT_ID` 决定，已写入 §4.7；多租户与 Agent 凭据改造一并做 |
 
 ## 8. 开放问题的定案
@@ -672,8 +682,8 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
 
 - **Q5 T2 公开白名单：已修订（4.8）。**
   1. 白名单按「方法 + 路径」列出，并对每项给出具体断言；
-  2. `/oauth/admin-mcp/*` 收窄为 `register`、`token`、`revoke` 三个精确路径，
-     `authorize` 移出白名单（它应跳转登录）；
+  2. `/oauth/admin-mcp/*` 收窄为 `register`、`token`、`authorize`、`revoke` 四个精确
+     路径，各自给出预期状态；
   3. bundles 保留，前提「bundle 不含租户数据」写入 §3；
   4. 跳转登录的 `Location` 精确到 pathname；
   5. 匿名请求不带 `Origin`，避开 admin 退出接口的 204 特例；
