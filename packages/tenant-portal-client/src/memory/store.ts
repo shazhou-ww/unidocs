@@ -9,6 +9,7 @@ import type {
   DocumentLocation,
   DocumentRecord,
   MessageContent,
+  PublicDocumentType,
   ReplyRecord,
   ThreadDetail,
   VersionRecord,
@@ -49,6 +50,8 @@ export interface SeedDocument {
 
 export interface MemorySeed {
   readonly documents: readonly SeedDocument[];
+  /** listPublicDocumentTypes 的内容；省略时为空目录。 */
+  readonly documentTypes?: readonly PublicDocumentType[];
 }
 
 interface ThreadState {
@@ -92,9 +95,11 @@ function stamp(tick: number): string {
 export class MemoryStore {
   readonly documents = new Map<DocumentId, DocumentState>();
   readonly receipts = new Map<string, IdempotencyReceipt>();
+  readonly documentTypes: readonly PublicDocumentType[];
   private tick = 0;
 
   constructor(seed: MemorySeed = { documents: [] }) {
+    this.documentTypes = seed.documentTypes ?? [];
     for (const doc of seed.documents) this.loadDocument(doc);
   }
 
@@ -231,9 +236,14 @@ export class MemoryStore {
       .map(([threadId]) => threadId);
   }
 
-  /** 同 key 同内容重放原结果；同 key 不同内容 409。 */
+  /**
+   * 同 key 同内容重放原结果；同 key 不同内容 409；没有 key 直接 400——这三个路由
+   * (createDocument / createThread / appendComment) 在契约里都是 IdempotentMutationHeadersSchema,
+   * 真实服务端由 oRPC 的 header 校验挡在门口;内存 transport 以前对缺 key 视而不见,
+   * 掩盖了真实服务端必然拒绝的请求（终审 finding 2）。
+   */
   withIdempotency<T>(scope: string, key: string | undefined, body: unknown, run: () => T): T {
-    if (key === undefined) return run();
+    if (key === undefined) throw new InvalidRequest("idempotency-key is required");
 
     const receiptKey = `${scope}:${key}`;
     const fingerprint = JSON.stringify(body ?? null);

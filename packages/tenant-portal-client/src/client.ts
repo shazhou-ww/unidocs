@@ -33,7 +33,7 @@ export interface TenantPortalClient {
   listPublicDocumentTypes(query?: PaginationQuery): Promise<ListPublicDocumentTypesResponse>;
   getDocumentContract(documentType: DocumentType, idx: DocumentContractIdx): Promise<DocumentContractRecord>;
   listDocuments(query?: ListDocumentsQuery): Promise<ListDocumentsResponse>;
-  createDocument(body: CreateDocumentRequest): Promise<DocumentRecord>;
+  createDocument(idempotencyKey: string, body: CreateDocumentRequest): Promise<DocumentRecord>;
   getDocument(documentId: DocumentId): Promise<DocumentRecord>;
   listVersions(documentId: DocumentId, query?: PaginationQuery): Promise<ListVersionsResponse>;
   getVersion(documentId: DocumentId, versionIdx: VersionIdx): Promise<VersionRecord>;
@@ -102,7 +102,7 @@ export function createTenantPortalClient(options: {
         limit: query.limit,
       }),
 
-    createDocument: (body) => post(`${base}/documents`, body),
+    createDocument: (idempotencyKey, body) => post(`${base}/documents`, body, idempotencyKey),
     getDocument: (documentId) => get(doc(documentId)),
 
     listVersions: (documentId, query = {}) =>

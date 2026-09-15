@@ -9,8 +9,8 @@
  *
  * Agents use the read and CAS endpoints from `PlatformEndpointContracts`.
  */
-import type { SValue } from "@unidocs/protocol";
 import type {
+  CasBlobRef,
   DocumentContractIdx,
   DocumentLocation,
   DocumentId,
@@ -25,6 +25,15 @@ import type {
 } from "./common.js";
 import type { ReplyRecord, VersionRecord } from "./resources.js";
 
+/**
+ * `cas:lease` is not a narrower grant than `cas:write` on the CAS side: CAS
+ * (`unicas-packages/service/src/tenant-auth.ts`) maps both `lease` and
+ * `updateRootRefs` onto the same `casWritePermission`, so a capability minted
+ * for `cas:lease` can write anything a `cas:write` capability can. The real
+ * boundary that stops an Agent from moving a business root reference is that
+ * the Platform never puts a `refDomain` claim in an Agent's capability — CAS
+ * gates Root Refs writes on `refDomain`, not on the permission set.
+ */
 export type AgentScope =
   | "documents:read"
   | "cas:read"
@@ -38,16 +47,22 @@ export interface AgentThreadUpdate {
   readonly observedAcknowledgedCommentIdx: CommentIdx | null;
   readonly respondThroughCommentIdx: CommentIdx;
   readonly content: MessageContent;
-  /** Relative to newSnapshot; must be empty when newSnapshot is omitted. */
+  /** Relative to newSnapshotBlob; must be empty when newSnapshotBlob is omitted. */
   readonly resultLocations: readonly DocumentLocation[];
 }
 
 export interface AgentSubmissionRequest {
   readonly submissionId: SubmissionId;
   readonly observedCurrentVersionIdx?: VersionIdx | null;
-  /** Required with newSnapshot and must name an available paired contract revision. */
+  /** Required with newSnapshotBlob and must name an available paired contract revision. */
   readonly newDocumentContractIdx?: DocumentContractIdx;
-  readonly newSnapshot?: SValue;
+  /**
+   * Snapshot written directly to UniCAS by the Agent before submitting. The
+   * Platform does not proxy CAS node traffic; it reads this blob back to
+   * validate it against the paired Document Contract revision, then retains
+   * the blob root after the transaction commits.
+   */
+  readonly newSnapshotBlob?: CasBlobRef;
   readonly threadUpdates: readonly AgentThreadUpdate[];
 }
 

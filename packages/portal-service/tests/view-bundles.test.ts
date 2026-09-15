@@ -83,3 +83,28 @@ describe("View bundle service", () => {
     expect(updated.etag).not.toBe(before.etag);
   });
 });
+// This guard runs on every request the portal serves, not just bundle routes,
+// so what it refuses it refuses for the whole worker. `pnpm dev portal` binds
+// a loopback BUNDLE_ORIGIN and has no certificate to offer; before the
+// relaxation, merging the bundle feature turned every admin route — sign-in
+// included — into a blanket 503.
+test("bundleOrigin accepts a loopback origin for local development, and nothing else non-HTTPS", () => {
+  const store = { async put() {} };
+  const repository = {} as ViewBundleRepository;
+  for (const origin of ["http://127.0.0.1:8796", "http://localhost:8796", "https://bundles.shazhou.work"]) {
+    expect(() => createViewBundleService(repository, store, { bundleOrigin: origin }), origin).not.toThrow();
+  }
+  for (const origin of [
+    "http://bundles.shazhou.work",
+    "http://127.0.0.1",                     // no port: not a spelling the runtime binds
+    "http://127.0.0.1.evil.test:8796",      // a different host that merely starts with it
+    "https://bundles.shazhou.work/prefix",  // path, query and hash stay refused either way
+    "https://bundles.shazhou.work/?a=1",
+    "http://127.0.0.1:8796/x",              // loopback is scheme-only: path still refused
+    "http://127.0.0.1:8796?a=1",
+    "http://127.0.0.1:8796#frag",
+  ]) {
+    expect(() => createViewBundleService(repository, store, { bundleOrigin: origin }), origin)
+      .toThrow(/bundleOrigin must be an HTTPS origin/);
+  }
+});

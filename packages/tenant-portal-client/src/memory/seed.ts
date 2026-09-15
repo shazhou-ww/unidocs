@@ -2,7 +2,7 @@
  * 样本数据。六处讨论对应 spec §4.2 的右栏四种渲染，外加纯 reply 与基于 current 两种。
  * 偏移一律由 rangeOf 按原文查出，不写死数字——写死会在内容改动后静默错位。
  */
-import { createMarkdownTextRange } from "../doctypes/markdown.js";
+import { createMarkdownTextRange, MarkdownDocumentType } from "../doctypes/markdown.js";
 import type { MemorySeed, SeedThread } from "./store.js";
 
 export function rangeOf(content: string, quote: string): { start: number; end: number } {
@@ -87,6 +87,18 @@ function threads(): SeedThread[] {
 
 export function sampleSeed(): MemorySeed {
   return {
+    // 离线演示里「新建文档」要有类型可选；URL 只是占位，内存后端不提供 bundle。
+    documentTypes: [{
+      documentType: MarkdownDocumentType,
+      typeCardBundleId: "tcb-sample-markdown",
+      typeCard: {
+        locales: { en: { name: "Markdown", description: "Markdown document", sampleThumbnailAlt: "Markdown sample" } },
+        icon: { kind: "svg", url: "https://bundles.unidocs.local/sample/markdown/icon.svg" },
+        sampleThumbnailUrl: "https://bundles.unidocs.local/sample/markdown/sample.webp",
+      },
+      viewBundleId: "vb-sample-markdown",
+      availableDocumentContractIdxs: [0],
+    }],
     documents: [
       { documentId: "doc-sample", name: "UniDocs · 产品构想", versions: [{ content: V0 }, { content: V1 }, { content: V2 }], threads: threads() },
       { documentId: "doc-empty", name: "共创空间 · 发布手记", versions: [{ content: "# 发布手记\n\n还没开始写。\n" }], threads: [] },

@@ -8,7 +8,7 @@
  */
 
 import { join } from "node:path";
-import { SERVICE_TARGETS, serviceWorkers } from "./services.mjs";
+import { operatorDocTypes, operatorPlatform, SERVICE_TARGETS, serviceWorkers } from "./services.mjs";
 
 export const GATEWAY_PORT = 8787;
 export const GATEWAY_WORKER = "unidocs-gateway";
@@ -162,10 +162,19 @@ export function parseTargets(args) {
   return { docTypes, services };
 }
 
-/** Ports for the gateway plus the selected doc types; overrides win per key. */
+/**
+ * Every document type that runs as a worker: the selected ones, then the
+ * Operators the selected services need (see `operator` in services.mjs). Only
+ * the selected ones are registered with the gateway.
+ */
+export function docTypeWorkers(docTypes, services = []) {
+  return [...docTypes, ...operatorDocTypes(docTypes, services)];
+}
+
+/** Ports for the gateway plus every doc type worker; overrides win per key. */
 export function resolvePorts(docTypes, overrides = {}, services = []) {
   const ports = { gateway: overrides.gateway ?? GATEWAY_PORT };
-  for (const name of docTypes) {
+  for (const name of docTypeWorkers(docTypes, services)) {
     ports[name] = overrides[name] ?? DOC_TYPES[name].port;
   }
   for (const component of serviceWorkers(services)) {
@@ -261,7 +270,7 @@ export function bundleTargets(docTypes, { casMiddlewareOnly = false, casMiddlewa
     ...(casMiddleware ? [
       { entry: "stacks/unicas/local/mock-oidc-worker.mjs", outfile: "mock-oidc.js" },
     ] : []),
-    ...docTypes.map((name) => ({
+    ...docTypeWorkers(docTypes, services).map((name) => ({
       entry: DOC_TYPES[name].entry,
       outfile: `${name}.js`,
     })),
@@ -431,6 +440,11 @@ export function buildWorkers({
       ...(component.bundlePort ? { BUNDLE_ORIGIN: `http://${host}:${ports[`${component.name}Bundles`]}` } : {}),
     },
     d1Databases: { [component.d1Binding]: component.worker },
+    // The Operator worker this service dispatches webhooks to; it is started
+    // whenever this service is (`docTypeWorkers`), so the target always exists.
+    ...(component.operator
+      ? { serviceBindings: { [component.operator.serviceBinding]: DOC_TYPES[component.operator.docType].worker } }
+      : {}),
     ...(component.r2Binding ? { r2Buckets: { [component.r2Binding]: `${component.worker}-bundles` } } : {}),
     unsafeDirectSockets: [
       { host, port: ports[component.name] },
@@ -520,8 +534,14 @@ export function buildWorkers({
     CAS_STACK_ISSUER: stackFixture.issuer,
     CAS_STACK_TRUSTED_JWKS: JSON.stringify(stackFixture.jwks),
   };
-  for (const name of docTypes) {
+  for (const name of docTypeWorkers(docTypes, services)) {
     const spec = DOC_TYPES[name];
+    // The service this doc type is the Operator of. Its Agent calls go through
+    // PLATFORM_SERVICE but are addressed to PLATFORM_ORIGIN, because the
+    // platform only accepts a bearer request for its own origin — so the
+    // origin is read off that worker's final bindings, never recomputed.
+    const platform = operatorPlatform(name, services);
+    const platformWorker = platform && serviceWorkerConfigs.find(worker => worker.name === platform.worker);
     workers.push({
       name: spec.worker,
       modules: true,
@@ -534,6 +554,7 @@ export function buildWorkers({
         ...validatorBindings,
         ...stackBindings,
         ...(extraBindings[name] ?? {}),
+        ...(platformWorker ? { PLATFORM_ORIGIN: platformWorker.bindings.PORTAL_ORIGIN } : {}),
       },
       durableObjects: {
         [spec.editor]: { className: spec.editorClass, useSQLite: true },
@@ -542,7 +563,10 @@ export function buildWorkers({
           ? { [spec.fonts]: { className: spec.fontsClass, useSQLite: true } }
           : {}),
       },
-      serviceBindings: { CAS_SERVICE: docCasServiceTarget },
+      serviceBindings: {
+        CAS_SERVICE: docCasServiceTarget,
+        ...(platformWorker ? { PLATFORM_SERVICE: platformWorker.name } : {}),
+      },
       unsafeDirectSockets: [{ host, port: ports[name] }],
     });
   }

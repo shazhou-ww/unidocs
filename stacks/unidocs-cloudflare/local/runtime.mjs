@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -18,6 +19,8 @@ import {
   buildWorkers,
   bundleExternals,
   bundleTargets,
+  configuredOnly,
+  docTypeWorkers,
   ADMIN_PORT,
   MOCK_OIDC_PORT,
   EDGE_PORT,
@@ -26,7 +29,7 @@ import {
   SERVICE_WORKER,
   resolvePorts,
 } from "./doc-types.mjs";
-import { serviceWorkers } from "./services.mjs";
+import { operatorPlatform, serviceWorkers } from "./services.mjs";
 import { splitSqlStatements } from "./sql-statements.mjs";
 import { openDevLog } from "./dev-log.mjs";
 import { resolveWorkspaceAliases } from "../../../scripts/workspace-aliases.mjs";
@@ -413,9 +416,57 @@ function printStructuredLog({ level, message }) {
 }
 
 /**
+ * The secrets shared by a service and its Operator worker: the HMAC key both
+ * sides sign Operator traffic with (32 bytes as 64 lowercase hex, the only
+ * shape either side accepts) and the Agent bearer token the Operator submits
+ * with. Generated per boot, unless the process environment or the service's
+ * `.dev.vars` names them — the same precedence the other service bindings
+ * follow — so a key someone configured on purpose is not silently replaced.
+ *
+ * In the process environment they are `UNIDOCS_AGENT_API_TOKEN` and
+ * `UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY`, prefixed like
+ * `UNIDOCS_PORTAL_BOOTSTRAP_EMAIL`: that environment is shared with everything
+ * else the developer runs. `.dev.vars` reaches only the portal and keeps the
+ * binding names. A configured key in the wrong shape throws here, naming the
+ * variable and its source but not the value: otherwise the Operator answers
+ * 503 and every validation fails far from the cause.
+ */
+export function resolveOperatorSecrets({ processEnv = {}, devVars = {}, random = randomBytes } = {}) {
+  const environment = configuredOnly(processEnv);
+  const file = configuredOnly(devVars);
+  const configured = name => {
+    if (environment[`UNIDOCS_${name}`] !== undefined) {
+      return { value: environment[`UNIDOCS_${name}`], source: `UNIDOCS_${name} in the environment` };
+    }
+    if (file[name] !== undefined) return { value: file[name], source: `${name} in .dev.vars` };
+    return undefined;
+  };
+  const key = configured("MARKDOWN_OPERATOR_HMAC_KEY");
+  if (key && !/^[0-9a-f]{64}$/.test(key.value)) {
+    throw new Error(`${key.source} must be 64 lowercase hex characters (32 bytes); unset it to have one generated.`);
+  }
+  return {
+    agentToken: configured("AGENT_API_TOKEN")?.value ?? random(32).toString("base64url"),
+    operatorHmacKey: key?.value ?? random(32).toString("hex"),
+  };
+}
+
+/** The tenant the local portal issues sessions for, and so the Agent's. */
+const LOCAL_AGENT_TENANT_ID = "t-local";
+
+/**
  * Start the gateway plus the selected document type workers in one Miniflare
  * runtime. The Gateway receives a static registry containing only the selected
  * document types, so it 404s on the rest.
+ *
+ * A selected service that declares an Operator (`operator` in services.mjs)
+ * also starts that document type's worker — as a worker only, outside the
+ * gateway's registry — and the two are wired together: service bindings both
+ * ways, one generated HMAC key and Agent token (returned as `secrets`), and
+ * the Operator's own CAS credentials. The Operator's document type cannot be
+ * known at boot (the portal generates the id), so it is injected afterwards
+ * with `setMarkdownOperatorDocumentType`, which reconfigures the running
+ * Miniflare in place.
  */
 export async function startLocalRuntime({
   host = "127.0.0.1",
@@ -458,11 +509,13 @@ export async function startLocalRuntime({
     ports.mockOidc = portOverrides.mockOidc ?? MOCK_OIDC_PORT;
     ports.edge = portOverrides.edge ?? EDGE_PORT;
   }
+  // The selected doc types plus any Operator a selected service needs.
+  const workerDocTypes = docTypeWorkers(docTypes, services);
   if (casMiddlewareOnly) {
     // CAS middleware runs alone: no gateway, no doc type workers — the
     // independent-deployment boundary, mirrored by stacks/unicas/local/dev.mjs.
     delete ports.gateway;
-    for (const name of docTypes) delete ports[name];
+    for (const name of workerDocTypes) delete ports[name];
   }
 
   await Promise.all(
@@ -489,7 +542,7 @@ export async function startLocalRuntime({
       .filter((name) => process.env[name] !== undefined)
       .map((name) => [name, process.env[name]]),
   );
-  for (const name of docTypes) {
+  for (const name of workerDocTypes) {
     const devVars = DOC_TYPES[name].devVars;
     extraBindings[name] = mergeDocBindings({
       defaults: bindingDefaults[name],
@@ -501,58 +554,130 @@ export async function startLocalRuntime({
   // .dev.vars rather than the process environment, so configuring it does not
   // also move the CAS admin BFF off its local mock provider. Never log these.
   const serviceDevVars = {};
+  // Operator loop secrets, per service that declares an Operator. Resolved
+  // once here and handed verbatim to both sides; `setMarkdownOperatorDocumentType`
+  // rebuilds the options from these same values instead of minting new ones.
+  const operatorSecrets = {};
   for (const component of serviceWorkers(services)) {
-    if (!component.devVars) continue;
-    serviceDevVars[component.name] = await readDevVars(join(ROOT, component.devVars));
+    const devVars = component.devVars ? await readDevVars(join(ROOT, component.devVars)) : {};
+    if (component.operator) {
+      operatorSecrets[component.name] = resolveOperatorSecrets({ processEnv: process.env, devVars });
+    }
+    serviceDevVars[component.name] = {
+      ...devVars,
+      // The portal reads snapshot blobs out of UniCAS under the stack's own
+      // authority - the same fixture seedMiddlewareStacks just registered
+      // into CAS_CONTROL_DB, not the gateway's capabilityFixture (its issuer
+      // looks like `unidocs-gateway:local:...` and CAS never sees its key).
+      // `services.mjs` only declares the requirement (`component.cas`); the
+      // values are resolved here because that file has to stay dependency-free.
+      ...(component.cas
+        ? {
+            CAS_ORIGIN: casOrigin ?? urls.edge,
+            CAS_STACK_ID: resolvedStackFixture.stackId,
+            CAS_ISSUER: resolvedStackFixture.issuer,
+            CAS_AUDIENCE: resolvedStackFixture.audience,
+            CAS_REF_DOMAIN: "doc",
+            CAS_SIGNING_KID: resolvedStackFixture.kid,
+            CAS_SIGNING_KEY: resolvedStackFixture.privateKeyPkcs8,
+          }
+        : {}),
+      ...(component.operator
+        ? {
+            MARKDOWN_OPERATOR_HMAC_KEY: operatorSecrets[component.name].operatorHmacKey,
+            AGENT_API_TOKEN: operatorSecrets[component.name].agentToken,
+            AGENT_TENANT_ID: LOCAL_AGENT_TENANT_ID,
+          }
+        : {}),
+    };
   }
+  // The Operator side of each loop: the same secrets, and CAS credentials of
+  // its own so it can write snapshots as an Agent (read+write, no refDomain).
+  // Same stack fixture and origin as the portal's CAS_* above. Applied after
+  // the doc type's own defaults/.dev.vars, because a token or key that differs
+  // from the portal's is a loop that silently never authenticates.
+  // PLATFORM_ORIGIN and the service bindings are added by buildWorkers.
+  for (const name of workerDocTypes) {
+    const platform = operatorPlatform(name, services);
+    if (!platform) continue;
+    extraBindings[name] = {
+      ...extraBindings[name],
+      PLATFORM_AGENT_TOKEN: operatorSecrets[platform.name].agentToken,
+      MARKDOWN_OPERATOR_HMAC_KEY: operatorSecrets[platform.name].operatorHmacKey,
+      OPERATOR_CAS_ORIGIN: casOrigin ?? urls.edge,
+      OPERATOR_CAS_STACK_ID: resolvedStackFixture.stackId,
+      OPERATOR_CAS_ISSUER: resolvedStackFixture.issuer,
+      OPERATOR_CAS_AUDIENCE: resolvedStackFixture.audience,
+      OPERATOR_CAS_SIGNING_KID: resolvedStackFixture.kid,
+      OPERATOR_CAS_SIGNING_KEY: resolvedStackFixture.privateKeyPkcs8,
+    };
+  }
+  // The service whose markdown Operator `setMarkdownOperatorDocumentType`
+  // configures; none under casMiddlewareOnly, which starts no doc type worker.
+  const markdownPlatform = casMiddlewareOnly ? undefined : operatorPlatform("markdown", services);
   const resolvedCapabilityFixture = capabilityFixture ?? await createEphemeralCapabilityFixture();
 
   const devLog = logFile ? openDevLog(logFile) : null;
 
+  const log = devLog ? new TeeLog(logLevel, devLog) : new Log(logLevel);
+  const casAdminOrigin = casAdminPublicOrigin
+    ?? process.env.UNIDOCS_CAS_ADMIN_ORIGIN
+    ?? `http://localhost:4070`;
+
+  /**
+   * The complete Miniflare options, rebuilt from scratch each time. Miniflare
+   * 5's `setOptions` replaces every option rather than merging, so a
+   * reconfiguration has to hand back persistence, ports, logging and every
+   * worker exactly as the first boot did — with only the injected Operator
+   * document type differing.
+   */
+  const miniflareOptions = ({ markdownOperatorDocumentType } = {}) => convertV4MiniflareOptions({
+    host,
+    port: ports.gateway,
+    log,
+    logRequests: logLevel >= LogLevel.INFO,
+    // 只在开了日志文件时接管;不接管时 Miniflare 用它自己的默认打印,
+    // 一行代码都不受影响。
+    ...(devLog
+      ? {
+        handleStructuredLogs: (entry) => {
+          devLog.write({ src: "worker", level: entry.level, message: entry.message, timestamp: entry.timestamp });
+          printStructuredLog(entry);
+        },
+      }
+      : {}),
+    ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
+    workers: buildWorkers({
+      docTypes,
+      host,
+      ports,
+      bundleDir,
+      casFault,
+      extraBindings: markdownOperatorDocumentType === undefined
+        ? extraBindings
+        : {
+            ...extraBindings,
+            markdown: { ...extraBindings.markdown, MARKDOWN_OPERATOR_DOCUMENT_TYPE: markdownOperatorDocumentType },
+          },
+      capabilityFixture: resolvedCapabilityFixture,
+      stackFixture: resolvedStackFixture,
+      casAdminPublicOrigin: casAdminOrigin,
+      googleOidcClientId: process.env.GOOGLE_OIDC_CLIENT_ID,
+      googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
+      googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
+      portalBootstrapEmail: process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL ?? "",
+      casMiddlewareOnly,
+      casMiddleware: casMiddleware || !casOrigin,
+      casOrigin,
+      gatewayOAuth,
+      services,
+      serviceDevVars,
+    }),
+  });
+
   let mf;
   try {
-    mf = new Miniflare(
-      convertV4MiniflareOptions({
-        host,
-        port: ports.gateway,
-        log: devLog ? new TeeLog(logLevel, devLog) : new Log(logLevel),
-        logRequests: logLevel >= LogLevel.INFO,
-        // 只在开了日志文件时接管;不接管时 Miniflare 用它自己的默认打印,
-        // 一行代码都不受影响。
-        ...(devLog
-          ? {
-            handleStructuredLogs: (entry) => {
-              devLog.write({ src: "worker", level: entry.level, message: entry.message, timestamp: entry.timestamp });
-              printStructuredLog(entry);
-            },
-          }
-          : {}),
-        ...(persistPath ? { resourcePersistencePath: persistPath } : {}),
-        workers: buildWorkers({
-          docTypes,
-          host,
-          ports,
-          bundleDir,
-          casFault,
-          extraBindings,
-          capabilityFixture: resolvedCapabilityFixture,
-          stackFixture: resolvedStackFixture,
-          casAdminPublicOrigin: casAdminPublicOrigin
-            ?? process.env.UNIDOCS_CAS_ADMIN_ORIGIN
-            ?? `http://localhost:4070`,
-          googleOidcClientId: process.env.GOOGLE_OIDC_CLIENT_ID,
-          googleOidcClientSecret: process.env.GOOGLE_OIDC_CLIENT_SECRET,
-          googleOidcIssuer: process.env.GOOGLE_OIDC_ISSUER,
-          portalBootstrapEmail: process.env.UNIDOCS_PORTAL_BOOTSTRAP_EMAIL ?? "",
-          casMiddlewareOnly,
-          casMiddleware: casMiddleware || !casOrigin,
-          casOrigin,
-          gatewayOAuth,
-          services,
-          serviceDevVars,
-        }),
-      }),
-    );
+    mf = new Miniflare(miniflareOptions());
 
     await mf.ready;
 
@@ -596,9 +721,29 @@ export async function startLocalRuntime({
       docTypes,
       capabilityFixture: resolvedCapabilityFixture,
       stackFixture: resolvedStackFixture,
+      ...(markdownPlatform ? { secrets: { ...operatorSecrets[markdownPlatform.name] } } : {}),
       storage: createStorageProbe(mf, {
         stackId: resolvedStackFixture.stackId,
       }),
+      /**
+       * Point the markdown Operator at a document type (R15): its descriptor
+       * answers 503 `operator_not_configured` until this is called. Rebuilds
+       * the full options and applies them with `mf.setOptions`, which keeps
+       * the ports, the persistence path and the secrets, but restarts workerd:
+       * every handle taken from `mf` before the call (`getBindings`,
+       * `getD1Database`, …) is poisoned and must be taken again. Calling it
+       * again replaces the document type. Throws when no service runs the
+       * markdown Operator.
+       */
+      async setMarkdownOperatorDocumentType(documentType) {
+        if (!markdownPlatform) {
+          throw new Error("No selected service runs the markdown Operator; start the runtime with services: [\"portal\"].");
+        }
+        if (typeof documentType !== "string" || documentType.length === 0) {
+          throw new TypeError("documentType must be a non-empty string");
+        }
+        await mf.setOptions(miniflareOptions({ markdownOperatorDocumentType: documentType }));
+      },
       ...(devLog ? { logFile: devLog.path } : {}),
       async dispose() {
         await mf.dispose();

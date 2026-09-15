@@ -295,6 +295,22 @@ if (useAzure) {
     } : {}),
   });
   backend = { name: "Miniflare" };
+
+  // An empty portal database has no document type, so a tenant can create
+  // nothing. The seed registers markdown through the admin API and points the
+  // markdown Operator at it; it is idempotent, so it runs on every boot (the
+  // Operator's document type is not persisted, only the registration is).
+  // Best effort: a failed seed leaves the rest of the stack usable, so it only
+  // warns. Skipped without `mf` — the unit test's stub runtime has none.
+  if (services.includes("portal") && runtime.mf) {
+    try {
+      const { seedPortalCatalog } = await import("../stacks/unidocs-cloudflare/local/portal-seed.mjs");
+      const { documentType } = await seedPortalCatalog(runtime, { log: (line) => console.log(line) });
+      console.log(`Portal catalog: markdown is ${documentType}`);
+    } catch (error) {
+      console.warn(`⚠ Portal seed failed; tenants cannot create markdown documents until it succeeds (restart to retry).\n  ${error.message}`);
+    }
+  }
 }
 
 // 以下两步**两个栈同一条路径** —— 这正是字体登记表下沉成中立契约换来的东西。
@@ -374,9 +390,13 @@ if (useAzure) {
       // than reconstructed from the sources it would have to re-merge.
       if (!component.devVars || typeof runtime.mf?.getBindings !== "function") continue;
       const bindings = await runtime.mf.getBindings(component.worker);
+      // The portal seed binds its own administrator and invites this address,
+      // so an unset value no longer means "no administrator": it means no
+      // human can sign in to the admin console. The tenant console needs no
+      // sign-in, which the old wording, printed under it, left unclear.
       if (Object.hasOwn(bindings, "PORTAL_BOOTSTRAP_EMAIL") && !bindings.PORTAL_BOOTSTRAP_EMAIL) {
-        console.log(`  ${"".padEnd(14)} ⚠ no administrator is designated — sign-in will be refused.`);
-        console.log(`  ${"".padEnd(14)}   Set PORTAL_BOOTSTRAP_EMAIL in ${component.devVars} and restart.`);
+        console.log(`  ${"".padEnd(14)} ⚠ PORTAL_BOOTSTRAP_EMAIL is not set — nobody can sign in to the admin console (the tenant console needs no sign-in).`);
+        console.log(`  ${"".padEnd(14)}   Set it in ${component.devVars} and restart; the portal seed invites that address.`);
       }
     }
   }
@@ -397,17 +417,49 @@ console.log(`Local credentials (0600, direct-to-service tools): ${backend.creden
 // has the same shape either way.
 const webChildren = [];
 
+// Every frontend runs behind a wrapper (`npx vite`, `pnpm --filter … dev:ui`),
+// and signalling only the wrapper used to leave the real Vite server running
+// on its port — the next `pnpm dev` then died on "Port 5174 is already in use".
+// So on POSIX each frontend gets its own process group, and shutdown signals
+// the whole group. Windows has no process groups; there `child.kill` is all
+// there is.
+const ownProcessGroups = process.platform !== "win32";
+
+/** Spawns one frontend dev server and registers it for shutdown. */
+function spawnFrontend(command, args, options) {
+  // pnpm exports its own settings as npm_config_* to everything it runs, and
+  // `npx` then warns "Unknown env config manage-package-manager-versions" on
+  // every start. The setting means nothing to Vite, so it is not passed on.
+  const env = { ...(options.env ?? process.env) };
+  delete env.npm_config_manage_package_manager_versions;
+  const child = spawn(command, args, { ...options, env, detached: ownProcessGroups });
+  webChildren.push(child);
+  return child;
+}
+
+/** Signals every frontend, wrapper and server alike. Never throws: it also runs
+ *  from the `exit` handler, where an already-gone group is the normal case. */
+function stopFrontends(signal) {
+  for (const child of webChildren) {
+    try {
+      if (ownProcessGroups && child.pid) process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch {
+      // Already exited.
+    }
+  }
+}
+
 /** One Vite dev server, with the gateway URL its proxy needs. Shared by the
  *  doc-type loop and the service loop below so a service frontend is started
  *  on exactly the same terms as a doc-type one — including GATEWAY_URL. */
 function startWebFrontend(label, web, webPort) {
-  const child = spawn("npx", ["vite", "--host", LOCAL_HOST, "--port", String(webPort), "--strictPort"], {
+  const child = spawnFrontend("npx", ["vite", "--host", LOCAL_HOST, "--port", String(webPort), "--strictPort"], {
     cwd: join(root, web.dir),
     stdio: "inherit",
     env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
   });
   child.on("error", (err) => console.error(`[${label} web] failed to start:`, err.message));
-  webChildren.push(child);
   console.log(`  ${(label + " web").padEnd(8)} http://127.0.0.1:${webPort}`);
 }
 
@@ -427,35 +479,55 @@ for (const component of serviceFrontends(services)) {
 
 // The gateway webui (OAuth client + document list) talks to the gateway over
 // the /gw dev proxy, so it needs GATEWAY_URL like the doc-type frontends.
-const gatewayWebChild = spawn("npx", ["vite", "--host", LOCAL_HOST, "--port", "5174", "--strictPort"], {
+const gatewayWebChild = spawnFrontend("npx", ["vite", "--host", LOCAL_HOST, "--port", "5174", "--strictPort"], {
   cwd: join(root, "packages", "web-gateway"),
   stdio: "inherit",
   env: { ...process.env, GATEWAY_URL: runtime.urls.gateway },
 });
 gatewayWebChild.on("error", (err) => console.error("[web-gateway] failed to start:", err.message));
-webChildren.push(gatewayWebChild);
 console.log(`  ${"web-gateway".padEnd(8)} http://127.0.0.1:5174/ui/`);
 
 // The CAS admin console ships with the Miniflare stack's admin worker; spawn
 // its Vite dev server too so `pnpm dev` runs the whole middleware + apps.
 if (!useAzure && devOptions.casMode === "local") {
-  const adminWeb = spawn("pnpm", ["--filter", "@unicas/admin-webui", "dev:ui", "--", "--host", LOCAL_HOST], {
+  const adminWeb = spawnFrontend("pnpm", ["--filter", "@unicas/admin-webui", "dev:ui", "--", "--host", LOCAL_HOST], {
     cwd: root,
     stdio: "inherit",
     shell: process.platform === "win32",
   });
   adminWeb.on("error", (err) => console.error("[cas-admin web] failed to start:", err.message));
-  webChildren.push(adminWeb);
   console.log(`  ${"cas-admin web".padEnd(8)} http://127.0.0.1:4070`);
+}
+
+// A frontend in its own process group no longer hears the terminal's Ctrl+C or
+// hang-up, and none of the handlers below run if this process is SIGKILLed. The
+// watchdog covers that last case: it outlives us, notices we are gone and stops
+// the groups (see scripts/dev-frontend-watchdog.mjs).
+const frontendGroups = ownProcessGroups ? webChildren.map(child => child.pid).filter(Boolean) : [];
+if (frontendGroups.length > 0) {
+  spawn(process.execPath, [join(root, "scripts", "dev-frontend-watchdog.mjs"), String(process.pid), ...frontendGroups.map(String)], {
+    detached: true,
+    stdio: "ignore",
+  }).unref();
 }
 
 console.log("Ctrl+C to stop.");
 
+let stopping = false;
 const shutdown = async () => {
-  for (const child of webChildren) child.kill("SIGINT");
+  // A second Ctrl+C while the runtime is still disposing forces the exit.
+  if (stopping) process.exit(1);
+  stopping = true;
+  stopFrontends("SIGTERM");
   await runtime.dispose();
   process.exit(0);
 };
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// Closing the terminal window: the frontends are outside our process group and
+// would not get the hang-up themselves.
+process.on("SIGHUP", shutdown);
+// Any other way out — an uncaught error, a `process.exit` elsewhere — still
+// takes the frontends down. Synchronous by necessity; a repeat signal is harmless.
+process.on("exit", () => stopFrontends("SIGTERM"));

@@ -16,6 +16,7 @@ import { inspectBundleManifest } from "../bundles/manifest.js";
 import { type BundleObjectStore } from "../bundles/type-card-store.js";
 import { storeViewBundleObjects } from "../bundles/view-store.js";
 import { resourceEtag, schemaHash } from "../identity.js";
+import { isLocalDevOrigin } from "../local-dev-origin.js";
 
 export type ViewBundleErrorCode = "invalid_request" | "not_found" | "idempotency_conflict" | "precondition_failed" | "forbidden" | "bundle_already_exists";
 
@@ -89,7 +90,13 @@ export function createViewBundleService(repository: ViewBundleRepository, object
   readonly id?: () => string;
 }) {
   const origin = new URL(options.bundleOrigin);
-  if (origin.protocol !== "https:" || origin.pathname !== "/" || origin.search || origin.hash) throw new TypeError("bundleOrigin must be an HTTPS origin");
+  // Loopback is allowed for the same reason the portal's own origin is (see
+  // `isLocalDevOrigin`): `pnpm dev portal` has no certificate to serve, and
+  // this service is constructed on *every* request — so refusing http here
+  // does not disable bundles locally, it 503s the entire portal, admin
+  // sign-in included. The relaxation is the scheme only; the path/query/hash
+  // checks still apply, and `isLocalDevOrigin` is canonical-only.
+  if ((origin.protocol !== "https:" && !isLocalDevOrigin(options.bundleOrigin)) || origin.pathname !== "/" || origin.search || origin.hash) throw new TypeError("bundleOrigin must be an HTTPS origin, or a loopback origin for local development");
   const now = options.now ?? (() => new Date());
   const id = options.id ?? (() => crypto.randomUUID());
   return {

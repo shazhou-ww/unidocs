@@ -20,6 +20,15 @@ describe("rangeOf", () => {
 });
 
 describe("sampleSeed", () => {
+  it("带一个可新建的 markdown 文档类型（离线演示的「新建文档」要用）", async () => {
+    const api = client();
+    const types = await api.listPublicDocumentTypes();
+
+    expect(types.items.map((type) => type.documentType)).toEqual(["markdown"]);
+    const created = await api.createDocument("seed-key", { documentType: types.items[0].documentType, name: "新作品" });
+    expect(created.currentVersionIdx).toBeNull();
+  });
+
   it("样本文档有多个版本与多处讨论", async () => {
     const api = client();
     const documents = await api.listDocuments();

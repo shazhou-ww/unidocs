@@ -67,15 +67,26 @@ describe("bound Operator transport", () => {
     expect(response.proofHeaders).toEqual({ "x-unidocs-probe-signature": "a".repeat(43) });
   });
 
-  test.each([
+  const forbiddenHeaders: readonly Record<string, string>[] = [
+    { authorization: "Bearer secret" },
+    { cookie: "secret" },
     { "x-unidocs-cas-authorization": "secret" },
     { "x-unidocs-platform-authorization": "secret" },
     { "x-unidocs-signature": "x".repeat(1025) },
     { "x-unidocs-signature": "invalid\nheader" },
     Object.fromEntries(Array.from({ length: 9 }, (_, index) => [`x-unidocs-proof-${index}`, "x".repeat(1024)])),
-  ])("rejects delegated credentials or excessive proof headers %# before I/O", async headers => {
+  ];
+
+  test.each(forbiddenHeaders)("rejects delegated credentials or excessive proof headers %# before I/O", async headers => {
     const { transport, fetcher } = setup();
     await expect(transport.probe(baseUrl, new Uint8Array([123, 125]), headers)).rejects.toBeInstanceOf(OperatorTransportError);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  // The webhook shares probe's header rules: the same list must be refused there.
+  test.each(forbiddenHeaders)("rejects the same forbidden headers %# on a webhook before I/O", async headers => {
+    const { transport, fetcher } = setup();
+    await expect(transport.webhook(baseUrl, "/tenants/t/documents/d", new Uint8Array([123, 125]), headers)).rejects.toBeInstanceOf(OperatorTransportError);
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -150,6 +161,49 @@ describe("bound Operator transport", () => {
 
   test.each(["/../probe", "//internal/probe", "/probe?target=internal", "/%70robe", "/.well-known/unidocs-operator"])("rejects unsafe configured probe path %s", path => {
     expect(() => createBoundOperatorTransport([{ baseUrl, probePath: path, service: { fetch: async () => Response.json({}) } }])).toThrow();
+  });
+
+  test("posts a webhook to baseUrl + path with a JSON body and only x-unidocs headers", async () => {
+    const { transport, fetcher } = setup();
+    fetcher.mockResolvedValue(Response.json({ accepted: true, eventId: "evt-1" }));
+    const body = new TextEncoder().encode('{"eventId":"evt-1"}');
+    const result = await transport.webhook(baseUrl, "/tenants/t-local/documents/doc%2F1", body, { "x-unidocs-webhook-signature": "sig" });
+    expect(JSON.parse(new TextDecoder().decode(result.body))).toEqual({ accepted: true, eventId: "evt-1" });
+    expect(result.proofHeaders).toEqual({});
+    const [request] = fetcher.mock.calls[0];
+    expect(request.url).toBe(`${baseUrl}/tenants/t-local/documents/doc%2F1`);
+    expect(request.method).toBe("POST");
+    expect(request.redirect).toBe("manual");
+    expect(request.credentials).toBe("omit");
+    expect(request.headers.get("content-type")).toBe("application/json");
+    expect(request.headers.get("x-unidocs-webhook-signature")).toBe("sig");
+    expect(await request.text()).toBe('{"eventId":"evt-1"}');
+  });
+
+  test.each(["https://operator.example/other", "https://127.0.0.1", "http://operator.example/service"])("rejects a webhook to nonregistered target %s without I/O", async target => {
+    const { transport, fetcher } = setup();
+    await expect(transport.webhook(target, "/tenants/t/documents/d", new Uint8Array([123, 125]), {})).rejects.toBeInstanceOf(OperatorTransportError);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test.each(["tenants/t", "/", "//internal/x", "/a/../b", "/a/%2e%2e/b", "/a%zz", "/a?b", "/a#b", "/a\\b", "/a b", "/.well-known/unidocs-operator"])("rejects unsafe webhook path %s without I/O", async path => {
+    const { transport, fetcher } = setup();
+    await expect(transport.webhook(baseUrl, path, new Uint8Array([123, 125]), {})).rejects.toBeInstanceOf(OperatorTransportError);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  test("rejects a webhook answer that is not 200, not JSON, or over the response limit", async () => {
+    const { transport, fetcher } = setup();
+    const send = () => transport.webhook(baseUrl, "/tenants/t/documents/d", new Uint8Array([123, 125]), {});
+    fetcher.mockResolvedValueOnce(Response.json({ accepted: true }, { status: 202 }));
+    await expect(send()).rejects.toBeInstanceOf(OperatorTransportError);
+    fetcher.mockResolvedValueOnce(new Response("accepted", { headers: { "content-type": "text/plain" } }));
+    await expect(send()).rejects.toBeInstanceOf(OperatorTransportError);
+    fetcher.mockResolvedValueOnce(new Response(new Uint8Array(OPERATOR_IO_LIMITS.responseBytes + 1), { headers: { "content-type": "application/json" } }));
+    await expect(send()).rejects.toBeInstanceOf(OperatorTransportError);
+    fetcher.mockResolvedValueOnce(Response.redirect("https://169.254.169.254/", 302));
+    await expect(send()).rejects.toBeInstanceOf(OperatorTransportError);
+    expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
   test("does not disclose upstream secrets in failures", async () => {

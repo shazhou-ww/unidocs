@@ -42,6 +42,11 @@ const page = <T>(items: readonly T[]) => ({ items, nextCursor: null });
 const readRoutes: readonly Route[] = [
   {
     method: "GET",
+    pattern: new RegExp(`^${TENANT}/document-types$`),
+    handle: (store) => page(store.documentTypes),
+  },
+  {
+    method: "GET",
     pattern: new RegExp(`^${TENANT}/documents$`),
     handle: (store, request) => {
       const documentType = request.query?.documentType;

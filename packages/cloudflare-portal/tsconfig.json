@@ -10,6 +10,9 @@
   "include": ["src"],
   "references": [
     { "path": "../portal-service" },
-    { "path": "../protocol-admin-portal" }
+    { "path": "../protocol" },
+    { "path": "../protocol-admin-portal" },
+    { "path": "../protocol-tenant-portal" },
+    { "path": "../svalue-codec" }
   ]
 }

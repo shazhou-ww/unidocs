@@ -24,6 +24,11 @@ function transportFailure(message: string): PlatformResponse {
 export function createHttpTransport(options: {
   baseUrl: string;
   fetchImpl?: typeof fetch;
+  /**
+   * 环境无关的包不读 document.cookie——由调用方（webui）注入一个读 cookie 的函数。
+   * 只在 POST 上发这个头，GET 不发；调用方没给、或给了但返回 null，都不发。
+   */
+  csrfToken?: () => string | null;
 }): PlatformTransport {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -40,6 +45,10 @@ export function createHttpTransport(options: {
       headers.set("idempotency-key", request.idempotencyKey);
     }
     if (request.body !== undefined) headers.set("content-type", "application/json");
+    if (request.method === "POST") {
+      const token = options.csrfToken?.() ?? null;
+      if (token !== null) headers.set("x-csrf-token", token);
+    }
 
     let response: Response;
     try {

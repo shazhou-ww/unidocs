@@ -30,13 +30,33 @@ GATEWAY_OIDC_CLIENT_SECRET=
 # every identity until one is designated here (the console shows "no
 # permission"). Use the same address you sign in to Google with.
 #
-# It is consumed once. The first successful sign-in claims the bootstrap row;
-# after that this line does nothing, and further administrators are added from
-# inside the console. To hand it to a different account instead, stop the dev
-# server and delete `.wrangler/miniflare` at the repository root — that is the
-# local D1 database.
+# Under `pnpm dev portal` the dev seed (see the end of this file) invites this
+# address as an administrator on every boot, so it signs in as an invited
+# member and the bootstrap row is never claimed. Changing it adds the new
+# address and leaves the old one; to start over, stop the dev server and delete
+# `.wrangler/miniflare` at the repository root — that is the local D1 database.
+# Without the seed (a bare `startLocalRuntime`), it is consumed once: the first
+# successful sign-in claims the bootstrap row, and further administrators are
+# added from inside the console.
 #
 # Also settable as UNIDOCS_PORTAL_BOOTSTRAP_EMAIL in the environment, which
 # overrides this line.
 
 PORTAL_BOOTSTRAP_EMAIL=
+
+# The markdown Operator loop. `pnpm dev portal` starts the markdown worker
+# beside the portal and generates both values on every boot, handing the same
+# ones to both workers — leave them unset unless something outside the runtime
+# has to know them in advance. Set here, or in the environment as
+# UNIDOCS_AGENT_API_TOKEN / UNIDOCS_MARKDOWN_OPERATOR_HMAC_KEY (which override
+# this file; the unprefixed names in the environment are ignored). The key must
+# be 64 lowercase hex characters; anything else stops `pnpm dev portal` at
+# startup.
+#
+# On every boot `pnpm dev portal` also seeds the markdown document type through
+# the admin API, as the administrator seed@unidocs.local, and invites
+# PORTAL_BOOTSTRAP_EMAIL (above) instead of consuming the bootstrap — so that
+# account signs in as an invited administrator.
+#
+# AGENT_API_TOKEN=
+# MARKDOWN_OPERATOR_HMAC_KEY=

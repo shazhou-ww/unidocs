@@ -89,4 +89,37 @@ describe("createHttpTransport", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.error.code).toBe("not_found");
   });
+
+  it("sends the CSRF token on a POST", async () => {
+    const calls: Request[] = [];
+    const transport = createHttpTransport({
+      baseUrl: "https://example.test",
+      fetchImpl: async (input, init) => { calls.push(new Request(input, init)); return Response.json({}, { status: 201 }); },
+      csrfToken: () => "csrf-abc",
+    });
+    await transport({ method: "POST", path: "/api/v1/tenants/t1/documents", body: {}, idempotencyKey: "k" });
+    expect(calls[0].headers.get("x-csrf-token")).toBe("csrf-abc");
+  });
+
+  it("does not send the CSRF token on a GET", async () => {
+    const calls: Request[] = [];
+    const transport = createHttpTransport({
+      baseUrl: "https://example.test",
+      fetchImpl: async (input, init) => { calls.push(new Request(input, init)); return Response.json({ items: [], nextCursor: null }); },
+      csrfToken: () => "csrf-abc",
+    });
+    await transport({ method: "GET", path: "/api/v1/tenants/t1/documents" });
+    expect(calls[0].headers.has("x-csrf-token")).toBe(false);
+  });
+
+  it("omits the header when no token is available", async () => {
+    const calls: Request[] = [];
+    const transport = createHttpTransport({
+      baseUrl: "https://example.test",
+      fetchImpl: async (input, init) => { calls.push(new Request(input, init)); return Response.json({}, { status: 201 }); },
+      csrfToken: () => null,
+    });
+    await transport({ method: "POST", path: "/api/v1/tenants/t1/documents", body: {}, idempotencyKey: "k" });
+    expect(calls[0].headers.has("x-csrf-token")).toBe(false);
+  });
 });
