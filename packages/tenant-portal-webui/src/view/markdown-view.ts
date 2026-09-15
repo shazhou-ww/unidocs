@@ -16,12 +16,11 @@ import type {
   ViewSetViewportRequest,
   ViewSetViewportResponse,
 } from "@unidocs/protocol-platform";
-import { errorText } from "../error-text.js";
 import type { HostImplementation, ViewImplementation } from "./channel.js";
 import type { MarkerRole, RoledMarker } from "./markers.js";
 
 export interface MarkdownViewInstance extends ViewImplementation {
-  /** 当前用户选区在 source 上的偏移；无选区时 null。Task 15 的「添加评论」用。 */
+  /** 当前用户选区在 source 上的偏移；无选区时 null。 */
   selectionRange(): { start: number; end: number } | null;
 }
 
@@ -94,7 +93,7 @@ export function createMarkdownView(
   // 没有真实 host 的栏位（比如左栏「评论所基于的版本」那种历史版本对照）不装
   // 这个触发器——装了也必然发送失败，是一条死路，不是「支持给旧版本评论」。
   const commentable = options.commentable ?? true;
-  // 浮动按钮/输入框用 absolute 定位，要相对这个容器，不是相对整个页面。
+  // 浮动按钮用 absolute 定位，要相对这个容器，不是相对整个页面。
   if (container.style.position === "") container.style.position = "relative";
   let source = "";
   let host: HostImplementation | null = null;
@@ -103,10 +102,9 @@ export function createMarkdownView(
 
   // ---- 选区上方浮出的「添加评论」（§2.6、§3.1）--------------------------------
   //
-  // 只有 View 能把选区读出来再编码成 DocumentLocation，所以这一整段——浮动按钮、
-  // 内联输入框、失败后的重试——都活在这个模块里，不在 React 那一侧。jsdom 的
-  // Selection 支持有限，这条路径没有自动化测试覆盖（Task 15 brief 明确说明）；
-  // 手工验证记在提交信息和任务报告里。
+  // 只有 View 能把选区读出来再编码成 DocumentLocation，所以浮动按钮活在这个模块里；
+  // 点它只把位置交给 host.composeComment，输入框由 host 在讨论面板里打开——和「回复」
+  // 是同一个输入框，发送、草稿、失败重试都走 host 那一条路径，View 不再自带一份。
   let floatingEl: HTMLElement | null = null;
 
   function removeFloating(): void {
@@ -144,72 +142,19 @@ export function createMarkdownView(
     element.style.top = `${Math.max(0, rect.top - containerRect.top + container.scrollTop - 8)}px`;
   }
 
-  function openComposer(range: { start: number; end: number }, rect: DOMRect): void {
+  function composeAt(range: { start: number; end: number }): void {
     removeFloating();
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "selection-composer";
-    positionNear(wrapper, rect);
-
-    const textarea = document.createElement("textarea");
-    textarea.setAttribute("aria-label", "添加评论");
-    wrapper.appendChild(textarea);
-
-    const errorEl = document.createElement("p");
-    errorEl.setAttribute("role", "alert");
-    errorEl.hidden = true;
-    wrapper.appendChild(errorEl);
-
-    const actions = document.createElement("div");
-    actions.className = "selection-composer-actions";
-    const sendButton = document.createElement("button");
-    sendButton.type = "button";
-    sendButton.textContent = "发送";
-    const cancelButton = document.createElement("button");
-    cancelButton.type = "button";
-    cancelButton.textContent = "取消";
-    actions.append(sendButton, cancelButton);
-    wrapper.appendChild(actions);
-
-    cancelButton.addEventListener("click", () => removeFloating());
-
-    sendButton.addEventListener("click", () => {
-      void (async () => {
-        const text = textarea.value.trim();
-        if (text === "" || host === null) return;
-
-        const location = createMarkdownTextRange({
-          documentContractIdx,
-          content: source,
-          start: range.start,
-          end: range.end,
-        });
-
-        errorEl.hidden = true;
-        sendButton.disabled = true;
-        try {
-          // 每次点「发送」都用同一个 host.createThread 调用；失败时文本原样留在
-          // 输入框里，用户可以直接改「发送」为「重试」——见下面 catch 分支里
-          // 文案没有清空 textarea。
-          await host?.createThread({
-            baseVersionIdx: currentVersionIdx,
-            content: { text, richContent: null, attachments: [] },
-            location,
-          });
-          removeFloating();
-          window.getSelection()?.removeAllRanges();
-        } catch (cause) {
-          errorEl.hidden = false;
-          errorEl.textContent = errorText(cause);
-          sendButton.disabled = false;
-          sendButton.textContent = "重试";
-        }
-      })();
+    window.getSelection()?.removeAllRanges();
+    if (host === null) return;
+    const location = createMarkdownTextRange({
+      documentContractIdx,
+      content: source,
+      start: range.start,
+      end: range.end,
     });
-
-    container.appendChild(wrapper);
-    floatingEl = wrapper;
-    textarea.focus();
+    host.composeComment({ baseVersionIdx: currentVersionIdx, location }).catch((cause: unknown) => {
+      console.error("host.composeComment failed", cause);
+    });
   }
 
   function showTrigger(range: { start: number; end: number }, rect: DOMRect): void {
@@ -222,16 +167,18 @@ export function createMarkdownView(
     positionNear(button, rect);
     // 按下时不要抢焦点，否则选区会在 click 触发前先被清掉。
     button.addEventListener("mousedown", (event) => event.preventDefault());
-    button.addEventListener("click", () => openComposer(range, rect));
+    button.addEventListener("click", () => composeAt(range));
 
     container.appendChild(button);
     floatingEl = button;
   }
 
   if (commentable) {
-    container.addEventListener("mouseup", () => {
-      // 浮层自己被点击时也会经过这里；此时选区多半已经空了，交给上面各自的
-      // click handler 处理，这里只负责「有新选区才出触发按钮」。
+    container.addEventListener("mouseup", (event) => {
+      // 触发按钮挂在容器里，点它时 mouseup 也会冒泡到这里。此时绝不能重建或移除它：
+      // 被按下的按钮一旦在 mouseup 里脱离文档，浏览器就不再派发 click——「添加评论」
+      // 点了没反应。交给它自己的 click handler。
+      if (floatingEl !== null && event.target instanceof Node && floatingEl.contains(event.target)) return;
       const range = currentSelectionRange();
       if (range === null) { removeFloating(); return; }
       const rect = anchorRect();

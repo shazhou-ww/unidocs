@@ -1,14 +1,13 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DocumentLocation } from "@unidocs/protocol-tenant-portal";
 import {
   createMemoryStore, createMemoryTransport, createScriptedAgent, createTenantPortalClient, sampleSeed,
-  type MemoryStore, type PlatformTransport,
+  type MemoryStore,
 } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
 import { anchorKeyOf, createDraftStore } from "../src/drafts/draft-store.js";
-import { createThreadFromView, type CreateThreadFromViewDeps } from "../src/model/create-thread-from-view.js";
 import { DocumentPage } from "../src/pages/document.js";
 
 function setup(threadId?: string) {
@@ -25,62 +24,55 @@ const panel = () => screen.findByRole("complementary", { name: "讨论" });
 
 /**
  * 问题 2 的回归测试用夹具：让 doc-sample 上带一份「选区来的评论发送失败」留下的
- * 草稿——直接驱动 createThreadFromView（等价于 host.createThread 的真正实现），
- * 不经过 Selection API（jsdom 测不到，见 create-thread-from-view.test.ts）。
- * 用真实 localStorage，好让随后渲染的 DocumentPage 的 useDrafts 读到同一份草稿。
+ * 草稿（threadId 为 null、锚点是 location）。直接写进真实 localStorage，好让随后
+ * 渲染的 DocumentPage 的 useDrafts 读到同一份草稿。
  */
-async function seedOrphanedDraft(): Promise<{ store: MemoryStore; client: ReturnType<typeof createTenantPortalClient> }> {
+function seedOrphanedDraft(): { store: MemoryStore; client: ReturnType<typeof createTenantPortalClient> } {
   const store = createMemoryStore(sampleSeed());
-  let failNext = true;
-  const inner = createMemoryTransport({ store });
-  const transport: PlatformTransport = async (request) => {
-    if (failNext && request.method === "POST" && request.path.endsWith("/threads")) {
-      failNext = false;
-      return { ok: false, error: { error: { code: "limit_exceeded", message: "too many", requestId: "r1" } } };
-    }
-    return inner(request);
-  };
-  const client = createTenantPortalClient({ tenantId: "t1", transport });
+  const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ store }) });
 
   const location: DocumentLocation = {
     documentContractIdx: 0,
     locationType: "unidocs.markdown.text-range/v1",
     payload: { start: 0, end: 3, quote: "abc" },
   };
-
-  const draftStore = createDraftStore(localStorage);
-  const saveDraft: CreateThreadFromViewDeps["saveDraft"] = (input) => {
-    const draftId = input.draftId ?? crypto.randomUUID();
-    const draft = {
-      draftId,
-      documentId: "doc-sample",
-      anchorKey: anchorKeyOf({ threadId: input.threadId, location: input.location }),
-      threadId: input.threadId,
-      location: input.location,
-      baseVersionIdx: input.baseVersionIdx,
-      text: input.text,
-      idempotencyKey: crypto.randomUUID(),
-      editedFromCommentIdx: null,
-      updatedAt: new Date().toISOString(),
-    };
-    draftStore.save(draft);
-    return draftStore.list().find((candidate) => candidate.draftId === draftId) ?? draft;
-  };
-
-  await expect(createThreadFromView({
-    client,
+  createDraftStore(localStorage).save({
+    draftId: crypto.randomUUID(),
     documentId: "doc-sample",
-    draftsForAnchor: (anchorKey) => draftStore.list().filter((candidate) => candidate.anchorKey === anchorKey),
-    saveDraft,
-    removeDraft: (draftId) => draftStore.remove(draftId),
-    onSent: () => {},
-  }, {
-    baseVersionIdx: 2,
-    content: { text: "选区评论失败", richContent: null, attachments: [] },
+    anchorKey: anchorKeyOf({ threadId: null, location }),
+    threadId: null,
     location,
-  })).rejects.toThrow();
+    baseVersionIdx: 2,
+    text: "选区评论失败",
+    idempotencyKey: crypto.randomUUID(),
+    editedFromCommentIdx: null,
+    updatedAt: new Date().toISOString(),
+  });
 
   return { store, client };
+}
+
+/**
+ * 在「当前版本」正文里选中一段并点出 View 浮出的「添加评论」。jsdom 的 Range 没有
+ * getBoundingClientRect（View 靠它定位触发按钮），调用方负责先 stub 上。
+ */
+async function addCommentOnSelection(quote: string) {
+  const region = await screen.findByRole("region", { name: "当前版本" });
+  const node = await waitFor(() => {
+    const walker = document.createTreeWalker(region, NodeFilter.SHOW_TEXT);
+    for (let current = walker.nextNode(); current !== null; current = walker.nextNode()) {
+      if ((current.textContent ?? "").includes(quote)) return current;
+    }
+    throw new Error(`quote not rendered: ${quote}`);
+  });
+  const at = node.textContent!.indexOf(quote);
+  const range = document.createRange();
+  range.setStart(node, at);
+  range.setEnd(node, at + quote.length);
+  window.getSelection()!.removeAllRanges();
+  window.getSelection()!.addRange(range);
+  region.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  await userEvent.click(within(region).getByRole("button", { name: "添加评论" }));
 }
 
 describe("评论流程", () => {
@@ -287,7 +279,7 @@ describe("评论流程", () => {
   // 是 location:… 锚点，任何 thread 卡片都不会认领它——但 draftCount 仍然把它算
   // 进「N 条未发送」。草稿必须自己渲染成一张能点得到的卡片，不能只被计数、摸不着。
   it("选区评论发送失败留下的草稿单独渲染成卡片，可以重试发送", async () => {
-    const { store, client } = await seedOrphanedDraft();
+    const { store, client } = seedOrphanedDraft();
 
     render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     const p = await panel();
@@ -307,7 +299,7 @@ describe("评论流程", () => {
   });
 
   it("选区评论发送失败留下的草稿可以丢弃，丢弃后「N 条未发送」清零", async () => {
-    const { client } = await seedOrphanedDraft();
+    const { client } = seedOrphanedDraft();
 
     render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     const p = await panel();
@@ -317,5 +309,82 @@ describe("评论流程", () => {
 
     expect(within(p).queryByRole("note", { name: "未发送的评论" })).not.toBeInTheDocument();
     expect(within(p).queryByText(/条未发送/)).not.toBeInTheDocument();
+  });
+
+  describe("选中正文添加评论", () => {
+    const original = Range.prototype.getBoundingClientRect;
+    beforeEach(() => { Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 10, 10); });
+    afterEach(() => { Range.prototype.getBoundingClientRect = original; });
+
+    it("在讨论面板里打开和「回复」同一个输入框，带上选中的原文，正文里不浮出输入框", async () => {
+      setup();
+      const p = await panel();
+
+      await addCommentOnSelection("平台让人和外部");
+
+      const card = within(p).getByRole("group", { name: "新的一处" });
+      expect(card).toHaveTextContent("平台让人和外部");
+      expect(within(card).getByRole("textbox", { name: "添加评论" }).closest(".composer")).not.toBeNull();
+      expect(within(screen.getByRole("region", { name: "当前版本" })).queryByRole("textbox")).not.toBeInTheDocument();
+    });
+
+    it("发送后成为新的一处，位置就是选中的原文，草稿清掉", async () => {
+      const { store } = setup();
+      const p = await panel();
+
+      await addCommentOnSelection("平台让人和外部");
+      await userEvent.type(within(p).getByRole("textbox", { name: "添加评论" }), "这句太长了");
+      await userEvent.click(within(p).getByRole("button", { name: "发送" }));
+
+      await waitFor(() => {
+        const created = store.listThreadIds("doc-sample")
+          .map((threadId) => store.getThread("doc-sample", threadId))
+          .find((thread) => thread.comments[0]?.content.text === "这句太长了");
+        expect(created?.comments[0]?.location?.payload).toMatchObject({ quote: "平台让人和外部" });
+        expect(created?.comments[0]?.baseVersionIdx).toBe(2);
+      });
+      expect(within(p).queryByRole("group", { name: "新的一处" })).not.toBeInTheDocument();
+      expect(within(p).queryByText(/条未发送/)).not.toBeInTheDocument();
+    });
+
+    it("取消就收起，不留草稿", async () => {
+      setup();
+      const p = await panel();
+
+      await addCommentOnSelection("平台让人和外部");
+      await userEvent.type(within(p).getByRole("textbox", { name: "添加评论" }), "算了");
+      await userEvent.click(within(p).getByRole("button", { name: "取消" }));
+
+      expect(within(p).queryByRole("group", { name: "新的一处" })).not.toBeInTheDocument();
+      expect(within(p).queryByText(/条未发送/)).not.toBeInTheDocument();
+    });
+
+    it("发送失败时留下可重试的草稿，重试复用同一个 idempotencyKey", async () => {
+      const store = createMemoryStore(sampleSeed());
+      const keys: string[] = [];
+      const inner = createMemoryTransport({ store });
+      const client = createTenantPortalClient({
+        tenantId: "t1",
+        transport: async (request) => {
+          if (request.idempotencyKey !== undefined) keys.push(request.idempotencyKey);
+          if (keys.length === 1) return { ok: false, error: { error: { code: "limit_exceeded", message: "x", requestId: "r1" } } };
+          return inner(request);
+        },
+      });
+      render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+      const p = await panel();
+
+      await addCommentOnSelection("平台让人和外部");
+      await userEvent.type(within(p).getByRole("textbox", { name: "添加评论" }), "会失败一次");
+      await userEvent.click(within(p).getByRole("button", { name: "发送" }));
+
+      const note = await within(p).findByRole("note", { name: "未发送的评论" });
+      expect(await within(note).findByRole("alert")).toHaveTextContent("操作太频繁");
+      await userEvent.click(within(note).getByRole("button", { name: "重试" }));
+
+      await waitFor(() => expect(within(p).queryByText(/条未发送/)).not.toBeInTheDocument());
+      expect(keys).toHaveLength(2);
+      expect(keys[0]).toBe(keys[1]);
+    });
   });
 });

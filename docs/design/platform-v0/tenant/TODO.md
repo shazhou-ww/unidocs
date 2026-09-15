@@ -34,4 +34,5 @@
 - 定义 tenant 侧错误、空状态、加载状态和恢复流程。
 - 将 tenant 设计与根目录的统一 Platform、View 与 Operator API 契约逐项核对。
 - `ViewSetMarkersRequest.markers` 区分不了「这是评论自己的位置」「这是 Agent 改动后的位置」「这是已过时的位置」。临时的本地类型定义在 `packages/tenant-portal-webui/src/view/markers.ts`；协议 marker 加上 `role` 字段后可以删掉这个文件。
+- 选区「添加评论」需要 View 把选区位置交给 host、由 host 在讨论面板里打开输入框（与「回复」同一个输入框），但 View↔Host 协议只有 `host.createThread`（必须带正文）。临时的本地 host 方法是 `packages/tenant-portal-webui/src/view/channel.ts` 的 `composeComment`；View 换成隔离 iframe 前要把它加进 `protocol-platform` 的 host 契约。
 - `listThreads` 只返回 `ThreadRef`（仅 threadId），`DocumentRecord` 也没有讨论计数，工作台只能拉取每个 thread 来算出「N 处待回复」。这个 fan-out 集中在 `loadDiscussionSummary`（`packages/tenant-portal-webui/src/model/discussion-summary.ts`）；协议给计数后即可去掉这个 fan-out。

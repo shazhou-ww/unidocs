@@ -100,6 +100,7 @@ describe("ViewHost", () => {
       createThread: async () => { throw new Error("host A"); },
       appendComment: async () => { throw new Error("n/a"); },
       storeBlob: async () => { throw new Error("n/a"); },
+      composeComment: async () => { throw new Error("n/a"); },
     };
     const hostB: HostImplementation = { ...hostA, createThread: async () => { throw new Error("host B"); } };
 
@@ -125,6 +126,7 @@ describe("ViewHost", () => {
       createThread: async () => { throw new Error("host A"); },
       appendComment: async () => { throw new Error("n/a"); },
       storeBlob: async () => { throw new Error("n/a"); },
+      composeComment: async () => { throw new Error("n/a"); },
     };
     const hostB: HostImplementation = { ...hostA, createThread: async () => { throw new Error("host B"); } };
 

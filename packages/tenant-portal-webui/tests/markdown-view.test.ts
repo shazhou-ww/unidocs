@@ -266,6 +266,64 @@ describe("MarkdownView", () => {
     expect(addSpy).toHaveBeenCalledWith("mouseup", expect.any(Function));
   });
 
+  // 选区「添加评论」：View 只负责把选区编码成 DocumentLocation 交给 host
+  // （host.composeComment），输入框由 host 在讨论面板里打开——和「回复」是同一个
+  // 输入框，View 自己不再浮出第二种输入框。
+  //
+  // 浏览器里一次点击是 mousedown → mouseup → click。触发按钮挂在容器里，它的 mouseup
+  // 会冒泡到容器的选区监听上；监听若在这时重建浮层，被按下的按钮在 click 之前就已
+  // 脱离文档，浏览器不再派发 click——「添加评论」点了没反应。jsdom 会照样把 click
+  // 派发给脱离文档的元素，所以这里断言的是「mouseup 之后被按下的那个按钮仍在文档里」。
+  describe("选区「添加评论」", () => {
+    const original = Range.prototype.getBoundingClientRect;
+    beforeEach(() => {
+      Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 10, 10);
+      return () => { Range.prototype.getBoundingClientRect = original; };
+    });
+
+    async function selectHeading() {
+      const { container, view } = mounted();
+      const composeComment = vi.fn(async () => undefined);
+      const realHost = { composeComment } as unknown as HostImplementation;
+      const versioned = { ...(context as object), viewVersion: { versionIdx: 3, documentContractIdx: 0 } } as never;
+      await view.initialize({ protocol: "unidocs-view-host/v1", context: versioned, mode: { kind: "interactive" } }, realHost);
+      await view.loadSnapshot({ context: versioned, snapshot: { content } as never }, realHost);
+
+      const text = container.querySelector("h1")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(text, 0);
+      range.setEnd(text, 2);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      container.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      return { container, composeComment };
+    }
+
+    it("点「添加评论」时 mouseup 不替换掉被按下的触发按钮", async () => {
+      const { container } = await selectHeading();
+      const trigger = container.querySelector<HTMLButtonElement>(".add-comment-trigger");
+      expect(trigger).not.toBeNull();
+
+      trigger!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+
+      expect(trigger!.isConnected).toBe(true);
+    });
+
+    it("点「添加评论」把选区位置交给 host，View 自己不浮出输入框", async () => {
+      const { container, composeComment } = await selectHeading();
+
+      container.querySelector<HTMLButtonElement>(".add-comment-trigger")!.click();
+
+      await vi.waitFor(() => expect(composeComment).toHaveBeenCalledOnce());
+      expect(composeComment).toHaveBeenCalledWith({
+        baseVersionIdx: 3,
+        location: createMarkdownTextRange({ documentContractIdx: 0, content, start: content.indexOf("标题"), end: content.indexOf("标题") + 2 }),
+      });
+      expect(container.querySelector("textarea")).toBeNull();
+      expect(container.querySelector(".add-comment-trigger")).toBeNull();
+    });
+  });
+
   // 注：原本还想再加一条「commentable: false 时，就算容器上真的发生了 mouseup
   // 也不渲染触发按钮」的端到端断言，但验证时发现它对实现不敏感——jsdom 里不设置
   // 真实选区直接 dispatch mouseup，currentSelectionRange() 本来就会返回 null

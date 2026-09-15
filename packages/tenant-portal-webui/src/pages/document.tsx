@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Download, FileText, History as HistoryIcon, Link, Lock as LockIcon } from "lucide-react";
 import type { SValue } from "@unidocs/protocol-platform";
-import type { CommentRecord, VersionRecord } from "@unidocs/protocol-tenant-portal";
+import type { CommentRecord, DocumentLocation, VersionRecord } from "@unidocs/protocol-tenant-portal";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
 import { useClient } from "../client-context.js";
 import { anchorKeyOf, type Draft } from "../drafts/draft-store.js";
 import { useDrafts } from "../drafts/use-drafts.js";
 import { errorText } from "../error-text.js";
 import { decideRightPane, type RightPaneDecision } from "../model/compare.js";
-import { createThreadFromView } from "../model/create-thread-from-view.js";
-import { sendDraft, sentCommentOf } from "../model/send-comment.js";
+import { sendDraft } from "../model/send-comment.js";
 import { useDocumentSession } from "../model/use-document.js";
 import { useOperatorFollow } from "../model/use-operator-follow.js";
 import { ThreadPanel } from "../panel/thread-panel.js";
@@ -74,6 +73,9 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
   const [composingThreadId, setComposingThreadId] = useState<string | null>(null);
   const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
   const [composingInitialText, setComposingInitialText] = useState("");
+  // 选区「添加评论」在面板里打开的新一处：位置由 View 编码好交过来，还没有 threadId。
+  // 与 composingThreadId 共用 composeDraftId/composingInitialText——同一时刻只开一个输入框。
+  const [composingNew, setComposingNew] = useState<{ location: DocumentLocation; baseVersionIdx: number } | null>(null);
   const [draftFailures, setDraftFailures] = useState<Readonly<Record<string, string>>>({});
 
   const selected = session.summary?.threads.find(({ detail }) => detail.threadId === props.threadId) ?? null;
@@ -162,52 +164,28 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     return decision.markers.map((marker) => ({ ...marker, threadId: props.threadId ?? "" }));
   }, [decision, props.threadId]);
 
-  // View 的「添加评论」是唯一能把选区编码成 DocumentLocation 的地方（§3.1），
-  // 所以要给它一个能真的建 thread 的 host——而且这个 host 必须和其它发送路径
-  // 同样安全：失败不丢字、重试复用同一个 idempotencyKey（走 createThreadFromView，
-  // 它把草稿系统包了进去，不再直连 client）。
+  // View 的「添加评论」是唯一能把选区编码成 DocumentLocation 的地方（§3.1）。它只把
+  // 位置交过来；输入框在讨论面板里打开，和「回复」是同一个 Composer，发送走下面同一个
+  // send——失败不丢字、重试复用同一个 idempotencyKey。
   //
-  // carry-forward 2：ViewHost 的挂载 effect 只在挂载时读一次 props.host，这个
-  // 对象因此必须引用稳定。但它要用到的 client/currentVersionIdx/saveDraft/
-  // removeDraft/reload 这些值会随渲染变化——放进 useMemo 依赖会让引用又变得不
-  // 稳定。做法是用一个 ref 装这些易变值，每次渲染都更新它，而 memo 化的 host
-  // 闭包只在被调用的那一刻读 ref.current，从不把它们列进依赖数组。
-  const latest = useRef({
-    client,
-    draftsForAnchor: drafts.draftsForAnchor,
-    saveDraft: drafts.saveDraft,
-    removeDraft: drafts.removeDraft,
-    reload: session.reload,
-    bindReplyFollow: follow.bindReplyFollow,
-  });
-  latest.current = {
-    client,
-    draftsForAnchor: drafts.draftsForAnchor,
-    saveDraft: drafts.saveDraft,
-    removeDraft: drafts.removeDraft,
-    reload: session.reload,
-    bindReplyFollow: follow.bindReplyFollow,
-  };
+  // carry-forward 2：ViewHost 的挂载 effect 只在挂载时读一次 props.host，这个对象因此
+  // 必须引用稳定。它要读的草稿会随渲染变化，所以装进 ref，host 闭包只在被调用时读
+  // ref.current；useState 的 setter 本身是稳定的，可以直接用。
+  const latest = useRef({ draftsForAnchor: drafts.draftsForAnchor });
+  latest.current = { draftsForAnchor: drafts.draftsForAnchor };
 
   const viewHost: HostImplementation = useMemo(() => ({
     ...noopHost,
-    createThread: (request) => {
-      // 发请求前绑定文档作用域：请求回来时页面若已卸载或换了文档，就不开始等 reply。
-      const followReply = latest.current.bindReplyFollow();
-      return createThreadFromView({
-        client: latest.current.client,
-        documentId: props.documentId,
-        draftsForAnchor: latest.current.draftsForAnchor,
-        saveDraft: latest.current.saveDraft,
-        removeDraft: latest.current.removeDraft,
-        onSent: latest.current.reload,
-      }, request).then((detail) => {
-        const sent = sentCommentOf(detail);
-        followReply(sent.threadId, sent.commentIdx);
-        return detail;
-      });
+    composeComment: async ({ location, baseVersionIdx }) => {
+      // 同一处之前写了一半的草稿就接着写，不另起一份。
+      const existing = latest.current.draftsForAnchor(anchorKeyOf({ threadId: null, location }))
+        .find((draft) => draft.editedFromCommentIdx === null);
+      setComposingThreadId(null);
+      setComposingNew({ location, baseVersionIdx });
+      setComposeDraftId(existing?.draftId ?? null);
+      setComposingInitialText(existing?.text ?? "");
     },
-  }), [props.documentId]);
+  }), []);
 
   const send = async (draft: Draft) => {
     // 发请求前绑定文档作用域：POST 回来时页面若已卸载或换了文档，就不开始等 reply（见 use-operator-follow.ts）。
@@ -230,6 +208,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     const anchorKey = anchorKeyOf({ threadId, location: null });
     // 回到之前写了一半就切走的那份草稿，而不是每次打开都另起一份。
     const existing = drafts.draftsForAnchor(anchorKey).find((draft) => draft.editedFromCommentIdx === null);
+    setComposingNew(null);
     setComposingThreadId(threadId);
     setComposeDraftId(existing?.draftId ?? null);
     setComposingInitialText(existing?.text ?? "");
@@ -272,6 +251,33 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     void send(draft);
   };
 
+  const onNewComposeChange = (text: string) => {
+    if (composingNew === null) return;
+    const draft = drafts.saveDraft({
+      draftId: composeDraftId ?? undefined,
+      threadId: null,
+      location: composingNew.location,
+      baseVersionIdx: composingNew.baseVersionIdx,
+      text,
+    });
+    setComposeDraftId(draft.draftId);
+  };
+
+  const onNewComposeSend = (text: string) => {
+    if (composingNew === null) return;
+    const draft = drafts.saveDraft({
+      draftId: composeDraftId ?? undefined,
+      threadId: null,
+      location: composingNew.location,
+      baseVersionIdx: composingNew.baseVersionIdx,
+      text,
+    });
+    // 同回复：发送即收起；失败时这份草稿作为「新的一处」草稿块带着错误和「重试」出现。
+    setComposingNew(null);
+    setComposeDraftId(null);
+    void send(draft);
+  };
+
   const onComposeCancel = () => {
     // 明确点「取消」＝放弃这次输入；和「切去看别处」（onComposeBlurAway）不同，
     // 那种情况要保留草稿。
@@ -280,11 +286,13 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
       setDraftFailures((previous) => removeKey(previous, composeDraftId));
     }
     setComposingThreadId(null);
+    setComposingNew(null);
     setComposeDraftId(null);
   };
 
   const onComposeBlurAway = () => {
     setComposingThreadId(null);
+    setComposingNew(null);
     setComposeDraftId(null);
   };
 
@@ -293,7 +301,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
   const onDiscardDraft = (draftId: string) => {
     drafts.removeDraft(draftId);
     setDraftFailures((previous) => removeKey(previous, draftId));
-    if (composeDraftId === draftId) { setComposingThreadId(null); setComposeDraftId(null); }
+    if (composeDraftId === draftId) { setComposingThreadId(null); setComposingNew(null); setComposeDraftId(null); }
   };
 
   const onEditFromComment = (threadId: string, editComment: CommentRecord) => {
@@ -441,11 +449,14 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
           draftCount={drafts.count}
           orphanedDrafts={drafts.drafts.filter((draft) => draft.threadId === null)}
           composingThreadId={composingThreadId}
+          composingNew={composingNew}
           composeDraftId={composeDraftId}
           composingInitialText={composingInitialText}
           draftFailures={draftFailures}
           onComposeOpen={onComposeOpen}
           onComposeChange={onComposeChange}
+          onNewComposeChange={onNewComposeChange}
+          onNewComposeSend={onNewComposeSend}
           onComposeSend={onComposeSend}
           onComposeCancel={onComposeCancel}
           onComposeBlurAway={onComposeBlurAway}

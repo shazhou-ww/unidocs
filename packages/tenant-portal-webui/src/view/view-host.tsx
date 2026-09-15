@@ -11,6 +11,7 @@ export const noopHost: HostImplementation = {
   createThread: async () => { throw new Error("createThread is wired in Task 15"); },
   appendComment: async () => { throw new Error("appendComment is wired in Task 15"); },
   storeBlob: async () => { throw new Error("storeBlob is not available in this round"); },
+  composeComment: async () => { throw new Error("composeComment needs a document page host"); },
 };
 
 export function ViewHost(props: {
