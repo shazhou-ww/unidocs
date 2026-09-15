@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, History as HistoryIcon, Lock as LockIcon } from "lucide-react";
+import { ArrowLeft, Download, FileText, History as HistoryIcon, Link, Lock as LockIcon } from "lucide-react";
 import type { SValue } from "@unidocs/protocol-platform";
 import type { CommentRecord, VersionRecord } from "@unidocs/protocol-tenant-portal";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
@@ -18,6 +18,8 @@ import { DocumentCrumb, Topbar } from "../shell/app-shell.js";
 import type { HostImplementation } from "../view/channel.js";
 import type { RoledMarker } from "../view/markers.js";
 import { noopHost, ViewHost } from "../view/view-host.js";
+import { VersionHistory } from "./version-history.js";
+import { documentTypeDisplayName } from "./create-document-form.js";
 
 const RIGHT_PANE_NOTE: Readonly<Record<RightPaneDecision["kind"], string | null>> = {
   "reply-result": null,
@@ -54,6 +56,17 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
     onProgress: session.reload,
   });
   const [base, setBase] = useState<BaseVersion | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [typeNames, setTypeNames] = useState<Readonly<Record<string, string>>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    void client.listPublicDocumentTypes().then((page) => {
+      if (!cancelled) setTypeNames(Object.fromEntries(page.items.map((type) => [type.documentType, documentTypeDisplayName(type)])));
+    }).catch(() => { if (!cancelled) setTypeNames({}); });
+    return () => { cancelled = true; };
+  }, [client]);
 
   // 输入框都由动作触发：回复某一处开一份 Composer，「修改」直接压回一份草稿
   // （不经过 Composer——见 editFrom）。composeDraftId 记住当前 Composer 绑定的
@@ -89,7 +102,26 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
   }, [client, props.documentId, comment?.baseVersionIdx]);
 
   const currentContent = (session.currentSnapshot as unknown as MarkdownSnapshot | null)?.content ?? "";
+  const canDownload = typeof (session.currentSnapshot as unknown as MarkdownSnapshot | null)?.content === "string";
   const currentVersionIdx = session.document?.currentVersionIdx ?? null;
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setActionNotice("链接已复制");
+    } catch {
+      setActionNotice("复制失败，请从地址栏复制链接。");
+    }
+  };
+
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([currentContent], { type: "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${session.document?.name ?? "document"}.md`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
 
   const decision = useMemo<RightPaneDecision | null>(() => {
     if (comment === null || selected === null) return null;
@@ -289,7 +321,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
   // Composer 全部闪没再重新挂载一遍。session.document === null 时才是真的没有
   // 旧内容可以保留，只能整页显示错误。
   if (session.document === null) {
-    if (session.failure !== null) return <main className="document"><p role="alert">{session.failure.message}</p></main>;
+    if (session.failure !== null) return <section className="document empty"><p role="alert">{session.failure.message}</p><button type="button" onClick={session.reload}>重新加载文档</button></section>;
     return <main className="document"><p className="muted">加载中……</p></main>;
   }
 
@@ -307,13 +339,16 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
           </span>
           {session.loading && <span className="refreshing-badge" aria-live="polite">正在刷新…</span>}
           {follow.waitingForReply && <span className="refreshing-badge" aria-live="polite">等待 Operator 回复…</span>}
+          <button type="button" className="icon ghost" title="复制链接" aria-label="复制链接" onClick={() => void copyLink()}><Link size={14} aria-hidden="true" /></button>
+          {currentVersionIdx !== null && canDownload && !historyOpen && <button type="button" className="icon ghost" title="下载 Markdown" aria-label="下载 Markdown" onClick={download}><Download size={14} aria-hidden="true" /></button>}
+          {currentVersionIdx !== null && !historyOpen && <button type="button" aria-label="版本历史" onClick={() => { onComposeBlurAway(); setHistoryOpen(true); }}><HistoryIcon size={14} aria-hidden="true" />v{currentVersionIdx}</button>}
         </div>
       </Topbar>
 
       <div className="doc-header">
         <h1 className="doc-title">{session.document.name}</h1>
         <div className="doc-subtitle">
-          <span className="row" style={{ gap: 4 }}><FileText size={12} aria-hidden="true" />Markdown</span>
+          <span className="row" style={{ gap: 4 }}><FileText size={12} aria-hidden="true" />{typeNames[session.document.documentType] ?? session.document.documentType}</span>
           <span>·</span>
           <span>
             {session.document.currentVersionIdx === null
@@ -332,8 +367,17 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
         <p role="alert" className="reload-error-banner">刷新失败：{session.failure.message}</p>
       )}
       {follow.notice !== null && <p role="status" className="operator-wait-banner">{follow.notice}</p>}
+      {actionNotice !== null && <p role="status" className="operator-wait-banner">{actionNotice}</p>}
+      {split && !historyOpen && <div className="comparison-toolbar"><span>版本对照</span><button type="button" onClick={() => { onComposeBlurAway(); window.location.hash = routeToHash({ kind: "document", documentId: props.documentId }); }}><ArrowLeft size={14} aria-hidden="true" />返回当前版本</button></div>}
 
-      <div className={`doc-workspace${split ? " compare" : ""}`}>
+      {historyOpen && currentVersionIdx !== null ? <VersionHistory
+        key={props.documentId}
+        documentId={props.documentId}
+        currentVersionIdx={currentVersionIdx}
+        onClose={() => setHistoryOpen(false)}
+        onMoved={() => { setHistoryOpen(false); session.reload(); }}
+        onRefresh={session.reload}
+      /> : <div className={`doc-workspace${split ? " compare" : ""}`}>
         <section className="content-area">
           {split && (
             <div className="pane-wrapper pane-base">
@@ -385,7 +429,8 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
           selectedThreadId={props.threadId}
           selectedCommentIdx={props.commentIdx}
           onSelect={(threadId) => {
-            window.location.hash = routeToHash({ kind: "document", documentId: props.documentId, threadId });
+            onComposeBlurAway();
+            window.location.hash = routeToHash({ kind: "document", documentId: props.documentId, threadId: threadId === props.threadId ? undefined : threadId });
           }}
           onSelectComment={(commentIdx) => {
             window.location.hash = routeToHash({
@@ -408,7 +453,7 @@ export function DocumentPage(props: { documentId: string; threadId?: string; com
           onDiscardDraft={onDiscardDraft}
           onEditFromComment={onEditFromComment}
         />
-      </div>
+      </div>}
     </>
   );
 }

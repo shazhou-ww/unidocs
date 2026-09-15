@@ -2,6 +2,23 @@
 
 面向最终用户的 tenant 体验与 API 设计尚待展开。
 
+## UI 对齐进度
+
+`feat/tenant-ui-completion` 基于最新 `origin/main`（5257ac31）补充：
+
+- 工作台：类型筛选、标题/创建时间排序、网格/列表切换、分页读取、搜索空态和失败重试；侧栏显示已加载的作品数。
+- 版本历史：独立只读回看、版本下拉、父版本与评论来源、返回原讨论；移动 current 需要填写审计原因，并携带 observed current 并发锁。
+- 文档工具栏：复制链接、当前 Markdown 下载、退出分屏；历史回看不开放评论。
+- 讨论：折叠动作、最新评论选中、折叠草稿、按筛选区分空态。
+- 响应式：修正设备提示与应用的 CSS 显隐选择器；平板分屏上下排列，手机保持设计中的“暂未开放”。
+
+仍未完成，不能将整个设计标为已实现：
+
+- PSD 图层/区域阅读、选区评论与缩略图：当前 `ViewHost` 仅接本地 Markdown renderer，尚未接通隔离 View bundle 与 blob 读取；不能只改类型标签代替实际渲染。
+- Fork、标题/标签编辑：现有 tenant client 没有相应操作；标签、更新时间也不能伪造。排序暂使用真实创建时间。
+- 生产登录/账号管理不属于这两份作品与讨论设计的实现；登录设计仍保留在 `feat/tenant-login`。
+- 真实部署的 HTTP/session、PSD bundle 与 CAS 集成未在本分支的内存演示预览中验证。
+
 ## 已完成
 
 - tenant HTTP contract 已从 `@unidocs/protocol-platform` 拆到
