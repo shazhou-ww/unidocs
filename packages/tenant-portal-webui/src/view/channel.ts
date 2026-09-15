@@ -37,6 +37,18 @@ export interface HostImplementation {
   createThread(request: CreateThreadRequest): Promise<ThreadDetail>;
   appendComment(request: HostAppendCommentRequest): Promise<CommentRecord>;
   storeBlob(request: HostStoreBlobRequest): Promise<CasBlobRef>;
+  /**
+   * 选区「添加评论」：View 把选区编码成 DocumentLocation 交给 host，host 在讨论面板里
+   * 打开和「回复」同一个输入框，发送时再由 host 走草稿与 createThread。
+   * 协议里还没有这个方法（见 docs/design/platform-v0/tenant/TODO.md）；换成
+   * postMessage 前必须先把它加进 protocol-platform 的 host 契约。
+   */
+  composeComment(request: ComposeCommentRequest): Promise<void>;
+}
+
+export interface ComposeCommentRequest {
+  readonly baseVersionIdx: number;
+  readonly location: DocumentLocation;
 }
 
 export interface ViewImplementation {

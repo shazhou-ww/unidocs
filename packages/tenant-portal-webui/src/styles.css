@@ -88,6 +88,9 @@
 .composer textarea { width: 100%; min-height: 62px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; resize: vertical; background: var(--paper); }
 .composer-actions { display: flex; gap: 6px; }
 .thread-compose { padding: 0 12px 12px; }
+.new-comment-heading { display: flex; gap: 7px; align-items: center; padding: 11px 12px 0; font-size: 10.5px; }
+.new-comment-heading .version-badge { margin-left: auto; color: var(--muted); }
+.new-comment-quote { margin: 9px 12px; padding: 7px 10px; border-left: 2px solid var(--accent-draft); background: color-mix(in srgb, var(--accent-draft) 7%, transparent); color: var(--muted); font-size: 11.5px; line-height: 1.7; }
 
 /* ── 只读与刷新状态 ─────────────────────────────────────────────── */
 

@@ -1,9 +1,10 @@
 import { useState } from "react";
-import type { CommentRecord } from "@unidocs/protocol-tenant-portal";
+import type { CommentRecord, DocumentLocation } from "@unidocs/protocol-tenant-portal";
 import type { VersionIdx } from "@unidocs/tenant-portal-client";
 import { anchorKeyOf, type Draft } from "../drafts/draft-store.js";
 import type { SummarizedThread } from "../model/discussion-summary.js";
 import { DraftBlock } from "./draft-block.js";
+import { NewCommentCard } from "./new-comment-card.js";
 import { ThreadCard } from "./thread-card.js";
 
 export type ThreadFilter = "all" | "open" | "answered" | "unsent";
@@ -32,12 +33,16 @@ export function ThreadPanel(props: {
    */
   orphanedDrafts: readonly Draft[];
   composingThreadId: string | null;
+  /** 选区「添加评论」打开的新一处输入框；和 composingThreadId 同一时刻至多开一个。 */
+  composingNew: { readonly location: DocumentLocation; readonly baseVersionIdx: number } | null;
   composeDraftId: string | null;
   composingInitialText: string;
   draftFailures: Readonly<Record<string, string>>;
   onComposeOpen(threadId: string): void;
   onComposeChange(threadId: string, text: string): void;
   onComposeSend(threadId: string, text: string): void;
+  onNewComposeChange(text: string): void;
+  onNewComposeSend(text: string): void;
   onComposeCancel(): void;
   onComposeBlurAway(): void;
   onSendDraft(draft: Draft): void;
@@ -52,7 +57,9 @@ export function ThreadPanel(props: {
     }
     return filter === "all" || (filter === "open" ? state.open : !state.open);
   });
-  const visibleOrphans = filter === "all" || filter === "unsent" ? props.orphanedDrafts : [];
+  // 正在新一处输入框里编辑的那份草稿已经显示在输入框里，不再重复渲染成草稿块。
+  const visibleOrphans = (filter === "all" || filter === "unsent" ? props.orphanedDrafts : [])
+    .filter((draft) => !(props.composingNew !== null && draft.draftId === props.composeDraftId));
 
   return (
     <aside className="review-panel open thread-panel" role="complementary" aria-label="讨论">
@@ -76,6 +83,18 @@ export function ThreadPanel(props: {
 
       {props.draftCount > 0 && <p className="draft-count">{props.draftCount} 条未发送</p>}
 
+      {props.composingNew !== null && (
+        <NewCommentCard
+          location={props.composingNew.location}
+          baseVersionIdx={props.composingNew.baseVersionIdx}
+          initialText={props.composingInitialText}
+          onChange={props.onNewComposeChange}
+          onSend={props.onNewComposeSend}
+          onCancel={props.onComposeCancel}
+          onBlurAway={props.onComposeBlurAway}
+        />
+      )}
+
       {visibleOrphans.length > 0 && (
         <ul className="orphaned-drafts">
           {visibleOrphans.map((draft) => (
@@ -91,7 +110,7 @@ export function ThreadPanel(props: {
         </ul>
       )}
 
-      {visible.length === 0 && visibleOrphans.length === 0 && (
+      {visible.length === 0 && visibleOrphans.length === 0 && props.composingNew === null && (
         <p className="muted">
           {props.currentVersionIdx === null
             // 首版本产生前不能评论（§5.4）——不邀请一个注定失败的操作。
