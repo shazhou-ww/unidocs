@@ -4,17 +4,19 @@ import { CasClientError } from "@unicas/tenant-blob-client";
 import { agentApiContract, AgentApiErrorMap } from "@unidocs/protocol-platform";
 import {
   createTenantSubmissionService, TenantAccessError, TenantOperationError,
-  type CommittedSubmissionReceipt, type DocumentLocationValidator, type SnapshotVerifier, type TenantContext,
+  type DocumentLocationValidator, type SnapshotVerifier, type TenantContext,
   type TenantSubmissionRepository,
 } from "@unidocs/portal-service";
 import { readBoundedJsonRequest } from "../bounded-json-request.js";
 import type { SnapshotStore } from "../snapshot-store.js";
 import { CasUnavailableError } from "./cas-unavailable.js";
+import type { SnapshotRetention } from "./snapshot-retention.js";
 import { MAX_SNAPSHOT_BYTES, validateSnapshotBytes } from "./snapshot-validator.js";
 
 export interface AgentHttpDependencies {
   readonly submissions: TenantSubmissionRepository;
   readonly snapshots: SnapshotStore;
+  readonly retention: Pick<SnapshotRetention, "retainVersion">;
   readonly validateLocation: DocumentLocationValidator;
 }
 
@@ -24,8 +26,6 @@ interface AgentHttpContext {
   readonly tenant: TenantContext;
   readonly requestId: string;
   readonly submissions: SubmissionService;
-  /** Set only when THIS request's repository commit wrote the receipt; a replay never sets it. */
-  readonly commit: { receipt?: CommittedSubmissionReceipt };
 }
 
 /**
@@ -148,15 +148,13 @@ function errorResponse(code: AgentErrorCode, message: string, requestId: string)
  * `tenant-http.ts`: a bounded, strictly parsed body; errors mapped only around
  * the procedure call; only the unexpected logged.
  *
- * Retain (R8): after a submission commits a version, its snapshot blob is
- * retained, after the D1 commit and never before it. A retain failure is
- * logged as `portal_snapshot_retain_failed` and does not change the response:
- * the commit cannot be undone. A replayed receipt is not retained again. The
- * adapter tells a fresh commit from a replay by wrapping the repository's
- * `commit` for the request: only a `committed` outcome from this request's own
- * commit marks the receipt as fresh. A receipt the service returns from
- * `findReceipt` - a replay, or a twin that committed first - never passes
- * through that wrapper.
+ * Retain (R8): whenever a submission answers with a committed version - its
+ * own fresh commit, a replay, or a twin that committed first - the version's
+ * snapshot blob is retained unless D1 already records it as retained, always
+ * after the D1 commit and never before it. A retain failure is logged by the
+ * retention and does not change the response: the commit cannot be undone,
+ * and the version stays unretained for a replay or the retention sweep to
+ * repair (see snapshot-retention.ts).
  */
 export function createAgentHttp(dependencies: AgentHttpDependencies):
   (request: Request, tenant: TenantContext, requestId: string) => Promise<Response> {
@@ -166,14 +164,10 @@ export function createAgentHttp(dependencies: AgentHttpDependencies):
   const router = implementation.router({
     submissions: {
       create: implementation.submissions.create.handler(async ({ input, context }) => {
-        const receipt = await context.submissions.create(context.tenant, input.params.tenantId, input.params.documentId, input.body);
-        const snapshot = input.body.newSnapshotBlob;
-        if (context.commit.receipt?.version && snapshot !== undefined) {
-          try {
-            await snapshots.retain(snapshot, context.requestId);
-          } catch (error) {
-            console.error(JSON.stringify({ event: "portal_snapshot_retain_failed", requestId: context.requestId, blobHash: snapshot.blobHash, ...failure(error) }));
-          }
+        const { tenantId, documentId } = input.params;
+        const receipt = await context.submissions.create(context.tenant, tenantId, documentId, input.body);
+        if (receipt.state === "committed" && receipt.version) {
+          await dependencies.retention.retainVersion(context.tenant.tenantId, documentId, receipt.version.versionIdx);
         }
         return receipt;
       }),
@@ -197,18 +191,7 @@ export function createAgentHttp(dependencies: AgentHttpDependencies):
       boundedRequest = bounded.request;
     }
 
-    const commit: AgentHttpContext["commit"] = {};
-    const repository = dependencies.submissions;
-    const submissions = createTenantSubmissionService({
-      findReceipt: (...args) => repository.findReceipt(...args),
-      loadState: (...args) => repository.loadState(...args),
-      loadContract: (...args) => repository.loadContract(...args),
-      commit: async command => {
-        const outcome = await repository.commit(command);
-        if (outcome.kind === "committed") commit.receipt = outcome.receipt;
-        return outcome;
-      },
-    }, { validateLocation: dependencies.validateLocation, verifySnapshot: createSnapshotVerifier(snapshots, requestId) });
+    const submissions = createTenantSubmissionService(dependencies.submissions, { validateLocation: dependencies.validateLocation, verifySnapshot: createSnapshotVerifier(snapshots, requestId) });
 
     const handler = new OpenAPIHandler(router, {
       clientInterceptors: [async ({ next }) => {
@@ -231,7 +214,7 @@ export function createAgentHttp(dependencies: AgentHttpDependencies):
         return { error: { code: error.code.toLowerCase(), message: error.message, requestId } };
       },
     });
-    const result = await handler.handle(boundedRequest, { context: { tenant, requestId, submissions, commit } });
+    const result = await handler.handle(boundedRequest, { context: { tenant, requestId, submissions } });
     if (!result.matched) return errorResponse("not_found", "The requested resource was not found", requestId);
     return result.response;
   };

@@ -46,8 +46,10 @@ const decoder = new TextDecoder();
  * Sends the signed `unidocs-operator-webhook/v1` event for a committed write to
  * the document type's builtin Operator. R13: delivery is best effort - any
  * failure is logged as `portal_operator_webhook_failed` (name and message only)
- * and swallowed, with no retry and no rollback; later events and the Operator's
- * own idempotency absorb a lost one.
+ * and swallowed, with no retry and no rollback. A lost `comment.appended` is
+ * absorbed by the next event on the thread, since the Operator answers through
+ * the latest comment; a lost `document.created` has no next event and is asked
+ * for again by initialization-redelivery.ts when a session reads the document.
  */
 export function createOperatorDispatcher(options: OperatorDispatcherOptions): (write: CommittedTenantWrite) => Promise<void> {
   const now = options.now ?? (() => new Date());

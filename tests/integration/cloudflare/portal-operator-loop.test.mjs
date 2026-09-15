@@ -34,7 +34,7 @@ const NEW_TITLE = "新标题";
 const POLL_INTERVAL_MS = 250;
 const POLL_TIMEOUT_MS = 20_000;
 /** Structured log events that explain why an asynchronous step never arrived. */
-const DIAGNOSTIC_EVENTS = /portal_operator_webhook_failed|portal_operator_webhook_skipped|markdown_operator_event_failed|markdown_operator_submission_abandoned|portal_operation_failed|portal_snapshot_retain_failed|portal_cas_unavailable/;
+const DIAGNOSTIC_EVENTS = /portal_operator_webhook_failed|portal_operator_webhook_skipped|markdown_operator_event_failed|markdown_operator_submission_abandoned|portal_operation_failed|portal_snapshot_retain_failed|portal_snapshot_lost|portal_snapshot_retention_sweep_failed|portal_snapshot_retention_record_failed|portal_document_initialization_redelivery_failed|portal_cas_unavailable/;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const API = `${ORIGIN}/api/v1/tenants/${TENANT}`;
@@ -111,8 +111,12 @@ describe("the operator loop on a real stack", () => {
   }
 
   /** Fresh on every call: the seed reconfigured Miniflare, which poisons earlier handles. */
+  async function database() {
+    return runtime.mf.getD1Database("DB", "unidocs-portal");
+  }
+
   async function count(table) {
-    const db = await runtime.mf.getD1Database("DB", "unidocs-portal");
+    const db = await database();
     return db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE tenant_id = ? AND document_id = ?`).bind(TENANT, documentId).first("count");
   }
 
@@ -281,4 +285,64 @@ describe("the operator loop on a real stack", () => {
     expect(await count("portal_submissions"), "step 10: portal_submissions (first version, pure reply, rewrite)").toBe(3);
     expect(await count("portal_versions"), "step 10: portal_versions").toBe(2);
   });
+
+  test("11. a version whose retain was lost is retained by the next submission's sweep, and counted once", async () => {
+    const db = await database();
+    const version = await db.prepare(
+      "SELECT snapshot_blob_hash, snapshot_retained_at FROM portal_versions WHERE tenant_id = ? AND document_id = ? AND version_idx = 1",
+    ).bind(TENANT, documentId).first();
+    expect(version?.snapshot_retained_at, "step 11: version 1 was retained by its own submission").not.toBeNull();
+    const rootCount = async () => (await runtime.storage.middlewareRetainedRoots(runtime.stackFixture.stackId, TENANT))
+      .find(entry => entry.hash === version.snapshot_blob_hash)?.count;
+    const retainedOnce = await rootCount();
+    expect(retainedOnce, "step 11: version 1 root reference count").toBeGreaterThanOrEqual(1);
+
+    // What a worker that died between the D1 commit and the retain leaves
+    // behind, aged past the sweep's grace period.
+    await db.prepare(
+      "UPDATE portal_versions SET snapshot_retained_at = NULL, created_at = created_at - 120 WHERE tenant_id = ? AND document_id = ? AND version_idx = 1",
+    ).bind(TENANT, documentId).run();
+
+    const response = await fetch(`${API}/documents/${documentId}/threads/${questionThreadId}/comments`, write({
+      baseVersionIdx: 1,
+      content: { text: "还有问题吗？", richContent: null, attachments: [] },
+      location: null,
+    }));
+    const text = await response.text();
+    expect(response.status, `step 11: POST comments -> ${text}`).toBe(201);
+
+    await waitFor("the sweep after the Operator's reply to retain version 1 again", async () => {
+      const row = await (await database()).prepare(
+        "SELECT snapshot_retained_at FROM portal_versions WHERE tenant_id = ? AND document_id = ? AND version_idx = 1",
+      ).bind(TENANT, documentId).first();
+      return { done: row?.snapshot_retained_at !== null, value: row, observed: row };
+    });
+    // The same deterministic requestId: UniCAS applied the repeated retain once.
+    expect(await rootCount(), "step 11: root reference count after the repair").toBe(retainedOnce);
+  }, 30_000);
+
+  test("12. a document whose document.created was lost is initialized once a session reads it", async () => {
+    // What a lost creation dispatch leaves behind: a versionless document
+    // the Operator never heard about, older than the redelivery window.
+    const orphanId = `orphan-${crypto.randomUUID()}`;
+    await (await database()).prepare(
+      "INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at) VALUES (?, ?, 'Orphan', ?, NULL, unixepoch() - 60)",
+    ).bind(TENANT, orphanId, documentType).run();
+
+    const document = await waitFor(`the Operator to initialize ${orphanId} after a session read`, async () => {
+      const observed = await getJson(`/documents/${orphanId}`, "step 12");
+      return { done: observed.currentVersionIdx === 0, value: observed, observed };
+    });
+    expect(document.currentVersionIdx, "step 12: currentVersionIdx").toBe(0);
+
+    const submissions = await (await database()).prepare(
+      "SELECT COUNT(*) AS count FROM portal_submissions WHERE tenant_id = ? AND document_id = ?",
+    ).bind(TENANT, orphanId).first("count");
+    expect(submissions, "step 12: one first-version submission").toBe(1);
+    // A rejected duplicate would leave no submission row, so the pacing shows
+    // only in the log: the reads polled every 250ms, and one of them asked.
+    const redeliveries = (await readFile(logFile, "utf8")).split("\n")
+      .filter(line => line.includes("portal_document_initialization_redelivered") && line.includes(orphanId));
+    expect(redeliveries, "step 12: redeliveries logged for the orphan").toHaveLength(1);
+  }, 30_000);
 });

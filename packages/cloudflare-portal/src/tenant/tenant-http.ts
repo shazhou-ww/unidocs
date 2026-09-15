@@ -25,6 +25,13 @@ export interface TenantHttpDependencies {
    * and a replay may be the retry of a request whose first notification was lost.
    */
   readonly onCommitted?: (write: CommittedTenantWrite) => void;
+  /**
+   * Told when a browser session reads a document that has no version yet, the
+   * one signal that its `document.created` may have been lost (see
+   * initialization-redelivery.ts). An Agent's read is not reported: the Agent
+   * reading it is the Operator initializing it.
+   */
+  readonly onUninitializedRead?: (document: { readonly tenantId: string; readonly documentId: string }) => void;
 }
 
 /**
@@ -92,8 +99,13 @@ export function createTenantHttp(dependencies: TenantHttpDependencies):
         committed({ kind: "document.created", tenantId, documentId: record.documentId });
         return record;
       }),
-      get: implementation.documents.get.handler(({ input, context }) =>
-        documents.get(context.tenant, input.params.tenantId, input.params.documentId)),
+      get: implementation.documents.get.handler(async ({ input, context }) => {
+        const record = await documents.get(context.tenant, input.params.tenantId, input.params.documentId);
+        if (record.currentVersionIdx === null && context.tenant.transport === "session") {
+          dependencies.onUninitializedRead?.({ tenantId: input.params.tenantId, documentId: record.documentId });
+        }
+        return record;
+      }),
       moveCurrentVersion: implementation.documents.moveCurrentVersion.handler(async ({ input, context }) => {
         forbidBearerWrite(context.tenant);
         const { tenantId, documentId } = input.params;
