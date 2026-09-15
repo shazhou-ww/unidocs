@@ -11,8 +11,9 @@
  * node content but carries no refDomain, so only the Portal's retain keeps it.
  * Every attempt re-reads Platform state, so a rejected receipt is recomputed
  * from what is there now; after three rejections the work is abandoned and
- * logged. Nothing here throws: webhook delivery is at-least-once and a later
- * event absorbs a lost one.
+ * logged. Nothing here throws: webhook delivery is at-least-once, a later
+ * comment event absorbs a lost one, and the Portal asks again for a document
+ * that is read while still without a version.
  */
 import { createCasBlobClient } from "@unicas/tenant-blob-client";
 import { createTenantCasClient } from "@unicas/tenant-client";

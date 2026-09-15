@@ -39,6 +39,8 @@ import { createTenantHttp } from "./tenant/tenant-http.js";
 import { createOperatorDispatcher } from "./tenant/operator-dispatch.js";
 import { createAgentHttp, isSubmissionPath } from "./tenant/agent-http.js";
 import { CasUnavailableError } from "./tenant/cas-unavailable.js";
+import { createInitializationRedelivery } from "./tenant/initialization-redelivery.js";
+import { createSnapshotRetention } from "./tenant/snapshot-retention.js";
 import { D1TenantSubmissionRepository } from "./tenant/submission-repository.js";
 import { D1TenantThreadRepository } from "./tenant/thread-repository.js";
 import { D1TenantVersionRepository } from "./tenant/version-repository.js";
@@ -65,6 +67,35 @@ function lazySnapshotStore(build: () => Promise<SnapshotStore>): SnapshotStore {
     retain: async (ref, requestId) => (await resolve()).retain(ref, requestId),
     release: async (ref, requestId) => (await resolve()).release(ref, requestId),
   };
+}
+
+/**
+ * One lazy snapshot store per tenant for the life of a request. The request's
+ * own tenant is the common case; the retention sweep can reach other tenants'
+ * versions, and a CAS capability is tenant-scoped.
+ */
+function tenantSnapshotStores(env: Env): (tenantId: string) => SnapshotStore {
+  const stores = new Map<string, SnapshotStore>();
+  return tenantId => {
+    let store = stores.get(tenantId);
+    if (!store) {
+      store = lazySnapshotStore(async () => {
+        try {
+          return await createPortalCasRuntime(env, tenantId);
+        } catch (error) {
+          throw new CasUnavailableError(error);
+        }
+      });
+      stores.set(tenantId, store);
+    }
+    return store;
+  };
+}
+
+/** Holds background work open when there is an execution context (tests have none); the work itself never rejects. */
+function inBackground(context: ExecutionContext | undefined, work: Promise<unknown>): void {
+  if (context) context.waitUntil(work);
+  else void work;
 }
 
 const TENANT_HEADERS = {
@@ -104,34 +135,35 @@ async function serveTenant(request: Request, env: Env, path: string, context?: E
           database: env.DB,
           target: () => createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY),
         });
-        const snapshots = lazySnapshotStore(async () => {
-          try {
-            return await createPortalCasRuntime(env, tenant.tenantId);
-          } catch (error) {
-            throw new CasUnavailableError(error);
-          }
-        });
-        response = isSubmissionPath(path)
-          ? await createAgentHttp({
+        const snapshotStores = tenantSnapshotStores(env);
+        const snapshots = snapshotStores(tenant.tenantId);
+        if (isSubmissionPath(path)) {
+          const retention = createSnapshotRetention({ database: env.DB, snapshots: snapshotStores });
+          response = await createAgentHttp({
             submissions: new D1TenantSubmissionRepository(env.DB),
             snapshots,
+            retention,
             validateLocation: createLocationValidator(),
-          })(request, tenant, requestId)
-          : await createTenantHttp({
+          })(request, tenant, requestId);
+          // Versions only ever come from submissions, so each one the Agent
+          // lands is also the moment to repair any version whose retain was
+          // lost earlier. A refused or malformed request triggers nothing.
+          if (request.method === "POST" && response.status === 201) inBackground(context, retention.sweep());
+        } else {
+          const redeliverInitialization = createInitializationRedelivery({ database: env.DB, dispatch: dispatchToOperator });
+          response = await createTenantHttp({
             catalog: new D1TenantCatalogRepository(env.DB),
             documents: new D1TenantDocumentRepository(env.DB),
             versions: new D1TenantVersionRepository(env.DB, snapshots),
             threads: new D1TenantThreadRepository(env.DB),
             validateLocation: createLocationValidator(),
-            onCommitted: write => {
-              // The response does not wait for the Operator. With no execution
-              // context (tests) the dispatch still starts, it is just not held
-              // open; it never rejects, so nothing is left unhandled.
-              const pending = dispatchToOperator(write);
-              if (context) context.waitUntil(pending);
-              else void pending;
-            },
+            // The response does not wait for the Operator. With no execution
+            // context (tests) the dispatch still starts, it is just not held
+            // open; it never rejects, so nothing is left unhandled.
+            onCommitted: write => inBackground(context, dispatchToOperator(write)),
+            onUninitializedRead: ({ tenantId, documentId }) => inBackground(context, redeliverInitialization(tenantId, documentId)),
           })(request, tenant, requestId);
+        }
       } catch (error) {
         if (!(error instanceof TenantAccessError)) throw error;
         response = Response.json(

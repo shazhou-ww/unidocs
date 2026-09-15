@@ -19,13 +19,20 @@ import { splitSqlStatements } from "../../../../stacks/unidocs-cloudflare/local/
 
 export interface RealD1 {
   readonly db: D1Database;
+  /** Applies one migration file by name, for a test that starts from an earlier schema. */
+  applyMigration(file: string): Promise<void>;
   dispose(): Promise<void>;
+}
+
+export interface RealD1Options {
+  /** Apply only migrations whose file name sorts at or before this one. */
+  readonly through?: string;
 }
 
 const WORKER = "tenant-real-d1";
 const MIGRATIONS = fileURLToPath(new URL("../../migrations/", import.meta.url));
 
-export async function startRealD1(): Promise<RealD1> {
+export async function startRealD1(options: RealD1Options = {}): Promise<RealD1> {
   const miniflare = new Miniflare(convertV4MiniflareOptions({
     workers: [{
       name: WORKER,
@@ -38,14 +45,16 @@ export async function startRealD1(): Promise<RealD1> {
   try {
     await miniflare.ready;
     const db = await miniflare.getD1Database("DB", WORKER) as unknown as D1Database;
-    const files = (await readdir(MIGRATIONS)).filter(file => file.endsWith(".sql")).sort();
-    for (const file of files) {
+    const applyMigration = async (file: string) => {
       const sql = await readFile(`${MIGRATIONS}${file}`, "utf8");
       for (const statement of splitSqlStatements(sql, file)) {
         await db.prepare(statement).run();
       }
-    }
-    return { db, dispose: () => miniflare.dispose() };
+    };
+    const files = (await readdir(MIGRATIONS)).filter(file => file.endsWith(".sql")).sort()
+      .filter(file => options.through === undefined || file <= options.through);
+    for (const file of files) await applyMigration(file);
+    return { db, applyMigration, dispose: () => miniflare.dispose() };
   } catch (error) {
     await miniflare.dispose();
     throw error;

@@ -2,6 +2,7 @@
  * The Agent submissions adapter over real D1 and an in-memory snapshot store:
  * the repository's locks and receipts are real SQL, while CAS is replaced by a
  * store whose `read` serves preset bytes and whose `retain` records its calls.
+ * The snapshot retention is the real one, over the same D1.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CasClientError } from "@unicas/tenant-blob-client";
@@ -12,6 +13,7 @@ import type { SnapshotStore } from "../../src/snapshot-store.js";
 import { createAgentHttp, isSubmissionPath } from "../../src/tenant/agent-http.js";
 import { CasUnavailableError } from "../../src/tenant/cas-unavailable.js";
 import { createLocationValidator } from "../../src/tenant/location-validator.js";
+import { createSnapshotRetention } from "../../src/tenant/snapshot-retention.js";
 import { MAX_SNAPSHOT_BYTES } from "../../src/tenant/snapshot-validator.js";
 import { D1TenantSubmissionRepository } from "../../src/tenant/submission-repository.js";
 import { startRealD1, type RealD1 } from "./real-d1.js";
@@ -75,9 +77,11 @@ let snapshots: MemorySnapshotStore;
 let repository: TenantSubmissionRepository;
 
 function handler(overrides: Partial<{ submissions: TenantSubmissionRepository; snapshots: SnapshotStore }> = {}) {
+  const store = overrides.snapshots ?? snapshots;
   return createAgentHttp({
     submissions: overrides.submissions ?? repository,
-    snapshots: overrides.snapshots ?? snapshots,
+    snapshots: store,
+    retention: createSnapshotRetention({ database: real.db, snapshots: () => store }),
     validateLocation: createLocationValidator(),
   });
 }
@@ -90,6 +94,12 @@ const post = (body: unknown, caller: TenantContext = agent, handle = handler()) 
 
 const get = (submissionId: string, caller: TenantContext = agent, handle = handler()) =>
   handle(new Request(`${BASE}/${submissionId}`), caller, "req-1");
+
+async function retainedAt(versionIdx: number): Promise<number | null | undefined> {
+  const row = await real.db.prepare("SELECT snapshot_retained_at FROM portal_versions WHERE tenant_id = 't-local' AND document_id = 'doc-1' AND version_idx = ?")
+    .bind(versionIdx).first<{ snapshot_retained_at: number | null }>();
+  return row?.snapshot_retained_at;
+}
 
 async function count(table: string): Promise<number> {
   return (await real.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ n: number }>())!.n;
@@ -167,8 +177,9 @@ describe("POST submissions", () => {
     const receipt = await response.json();
     expect(receipt).toMatchObject({ state: "committed", submissionId: "sub-1", version: { versionIdx: 0, parentVersionIdx: null, documentContractIdx: 0 }, replies: [] });
     expect(snapshots.retain).toHaveBeenCalledTimes(1);
-    expect(snapshots.retain).toHaveBeenCalledWith(ref, "req-1");
+    expect(snapshots.retain).toHaveBeenCalledWith(ref, "portal-version-snapshot:doc-1:0");
     expect(versionsAtRetain).toBe(1);
+    expect(await retainedAt(0)).toEqual(expect.any(Number));
   });
 
   it("replays the same submission with 201 and the stored receipt, without retaining again", async () => {
@@ -183,7 +194,20 @@ describe("POST submissions", () => {
     expect(await count("portal_versions")).toBe(1);
   });
 
-  it("does not retain when a twin with the same body committed the submission first", async () => {
+  it("retains on replay a version whose first retain failed, under the same requestId", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const ref = snapshots.put("blob-1", { content: "# hello" });
+    snapshots.retain.mockRejectedValueOnce(new CasClientError(503, "Service Unavailable", "retain"));
+    await post(versionRequest("sub-1", ref));
+    expect(await retainedAt(0)).toBeNull();
+
+    const replay = await post(versionRequest("sub-1", ref));
+    expect(replay.status).toBe(201);
+    expect(snapshots.retain.mock.calls.map(([, requestId]) => requestId)).toEqual(["portal-version-snapshot:doc-1:0", "portal-version-snapshot:doc-1:0"]);
+    expect(await retainedAt(0)).toEqual(expect.any(Number));
+  });
+
+  it("retains the version of a twin with the same body that committed first but has not retained it", async () => {
     const ref = snapshots.put("blob-1", { content: "# hello" });
     // From this request's point of view its commit conflicted: the twin's commit landed first.
     const twinFirst: TenantSubmissionRepository = {
@@ -198,7 +222,8 @@ describe("POST submissions", () => {
     const response = await post(versionRequest("sub-1", ref), agent, handler({ submissions: twinFirst }));
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({ state: "committed", submissionId: "sub-1" });
-    expect(snapshots.retain).not.toHaveBeenCalled();
+    expect(snapshots.retain).toHaveBeenCalledTimes(1);
+    expect(snapshots.retain).toHaveBeenCalledWith(ref, "portal-version-snapshot:doc-1:0");
   });
 
   it("answers a different body under a used submission id with 400", async () => {
@@ -374,7 +399,7 @@ describe("POST submissions", () => {
     expect(response.status).toBe(403);
   });
 
-  it("still answers 201 when retain fails, and logs portal_snapshot_retain_failed", async () => {
+  it("still answers 201 when retain fails, logs portal_snapshot_retain_failed and leaves the version unretained", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const ref = snapshots.put("blob-1", { content: "# hello" });
     snapshots.retain.mockRejectedValue(new CasClientError(503, "Service Unavailable", "retain"));
@@ -382,10 +407,11 @@ describe("POST submissions", () => {
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({ state: "committed" });
     expect(errorLines(logged)).toContainEqual({
-      event: "portal_snapshot_retain_failed", requestId: "req-1", blobHash: "blob-1",
+      event: "portal_snapshot_retain_failed", tenantId: "t-local", documentId: "doc-1", versionIdx: 0, blobHash: "blob-1",
       name: "CasClientError", message: "CAS retain failed: 503 Service Unavailable",
     });
     expect(await count("portal_submissions")).toBe(1);
+    expect(await retainedAt(0)).toBeNull();
   });
 
   it.each([

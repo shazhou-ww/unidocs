@@ -553,6 +553,8 @@ TDD。每层都有既定的测试位置：
 | Operator 行为 | 按评论内容在「纯 reply」与「reply + 新版本」之间选择 | §7.1 禁止为记录对话而造内容相同的版本；但两条路径都要实现，否则无法区分「正确地选了纯 reply」与「根本不会产生版本」 |
 | `open` 状态 | 不落库，SQL 派生 | 契约明示它不是可切换的存储标志 |
 | 种子写入方式 | 只经公开 admin API | 兼作 admin 控制面的集成测试 |
+| 丢失的 `document.created` 的补救 | tenant **session** 读到无版本文档时重新派发，每文档每 20 秒至多一次（D1 原子认领 `initialization_redelivered_at`）；Agent 读取、以及类型没有 builtin Operator 的文档不触发 | 首版本之前没有任何后续事件，唯一会发现「卡住」的是读者，而 webui 等待时正每 1.5 秒轮询 `getDocument`。不需要改 contract，也不需要定时任务；与仍在工作的 Operator 重叠时由版本锁吸收。代价：GET 带一次记账写，没人打开的文档不会被补救 |
+| 漏掉的 retain 的补救 | retain 的 requestId 由 (documentId, versionIdx) 确定；`portal_versions.snapshot_retained_at` 在 UniCAS 接受后才写入；提交返回已提交版本（含重放）时补 retain；每次 Agent 提交成功（201）后在 `waitUntil` 中扫一批未 retain 的版本。失败记 `snapshot_retain_attempted_at` 并排到队尾、60 秒内不重试；UniCAS 答 404（已被 GC）记 `snapshot_lost_at`，不再重试 | UniCAS 永久记住 root-refs requestId，同体重放只计一次，所以任何路径重复 retain 都安全。lease 默认 15 分钟，但 GC 只按需触发，且过期未回收的节点仍可 retain，只有已被回收的才救不回（记 `portal_snapshot_lost`）。版本只由提交产生，所以把提交当作对账时机。迁移前的版本视为已 retain：它们用的是不可重放的随机 requestId，再 retain 会多计一个永不释放的引用 |
 
 ## 17. 与 `agent-mediated-document-collaboration.md` 的一致性核对
 
@@ -598,13 +600,16 @@ TDD。每层都有既定的测试位置：
   类型在 `tenant-portal-webui/src/view/markers.ts`
 - `issueCasCapability` 仅保留契约形状，未落地真实能力签发
 - 生产部署、真实 tenant 身份源、多租户注册
-- 丢失的 `document.created` 无人补救：派发失败或超时，或 Operator 已接受但随后失败
-  （CAS 写入出错、Platform 5xx、连续三次被拒），该文档就永远没有版本 0。§5.4 规定
-  版本 0 之前不可能有任何后续事件，所以 Plan 4 R13「由后续事件吸收」对它不成立。
-  后续可选：读取方发现 `currentVersionIdx === null` 且创建已超过 N 秒时重新派发；
-  webui 提供「重试初始化」，重放创建幂等键；或 Operator 定期扫描未初始化文档
-- 漏掉的 retain 永远不会修复：retain 失败，或 worker 在 D1 提交与 retain 之间退出，
-  已提交版本就指向一个只有 lease 的 blob，可能被 GC 回收，此后读取该 snapshot 永久
-  返回 409。Operator 从不重放已提交的 `submissionId`，所以只靠「重放时补 retain」
-  修不好。后续：按 (tenant, document, versionIdx) 生成确定性的 retain requestId，
-  重放时也执行 retain，并加一个对账器扫描已提交版本补 retain
+- ~~丢失的 `document.created` 无人补救~~ **已补救**（§16）：tenant session 读到仍无版本
+  的文档时重新派发，每文档每 20 秒至多一次，见 `src/tenant/initialization-redelivery.ts`。
+  剩余缺口：没有任何人打开的文档不会被补救；Operator 永久故障时每个读者窗口都会再派发
+  一次
+- ~~漏掉的 retain 永远不会修复~~ **已补救**（§16）：确定性 retain requestId、D1 记录
+  retain 结果、重放时补 retain、每次 Agent 提交后扫描补 retain，见
+  `src/tenant/snapshot-retention.ts`。剩余缺口：
+  - 对账只在有 Agent 提交时运行；部署 tenant 数据面或 UniCAS 引入定时 GC 时，应加一个
+    cron trigger 调用同一个 `sweep`
+  - 迁移 0014 把既有版本一律视为已 retain，其中当初 retain 已失败的不会被补救
+  - 迁移与新代码必须一起上线：迁移后仍在服务的旧 worker 用随机 requestId retain、却不写
+    `snapshot_retained_at`，清扫会用确定性 requestId 再 retain 一次，多出一个永不释放的
+    引用

@@ -148,6 +148,51 @@ describe("tenant HTTP reads", () => {
     });
   });
 
+  describe("a read of a document still waiting for its first version", () => {
+    function watched() {
+      const onUninitializedRead = vi.fn();
+      const watching = createTenantHttp({
+        catalog: new D1TenantCatalogRepository(real.db),
+        documents: new D1TenantDocumentRepository(real.db),
+        versions: new D1TenantVersionRepository(real.db, snapshots),
+        threads: new D1TenantThreadRepository(real.db),
+        validateLocation: createLocationValidator(),
+        onUninitializedRead,
+      });
+      return { onUninitializedRead, watching };
+    }
+
+    async function seedVersionless(documentId: string) {
+      await real.db.prepare(
+        "INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at) VALUES ('t-local', ?, 'Draft', 'markdown', NULL, 1757808000)",
+      ).bind(documentId).run();
+    }
+
+    it("reports the document when a browser session reads it", async () => {
+      await seedVersionless("doc-1");
+      const { onUninitializedRead, watching } = watched();
+      const response = await watching(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents/doc-1`), tenant, "req-1");
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ documentId: "doc-1", currentVersionIdx: null });
+      expect(onUninitializedRead).toHaveBeenCalledExactlyOnceWith({ tenantId: "t-local", documentId: "doc-1" });
+    });
+
+    it("does not report it when the Agent reads it, since the Agent is the one initializing it", async () => {
+      await seedVersionless("doc-1");
+      const { onUninitializedRead, watching } = watched();
+      const response = await watching(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents/doc-1`), agent, "req-1");
+      expect(response.status).toBe(200);
+      expect(onUninitializedRead).not.toHaveBeenCalled();
+    });
+
+    it("does not report a document that has a version", async () => {
+      await seedDocumentWithVersion("doc-1");
+      const { onUninitializedRead, watching } = watched();
+      await watching(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents/doc-1`), tenant, "req-1");
+      expect(onUninitializedRead).not.toHaveBeenCalled();
+    });
+  });
+
   it("lists thread references for a document", async () => {
     await seedDocumentWithVersion("doc-1");
     const response = await get("/api/v1/tenants/t-local/documents/doc-1/threads?open=true");
