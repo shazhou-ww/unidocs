@@ -21,6 +21,7 @@ import { createLocationValidator } from "../../src/tenant/location-validator.js"
 import { createTenantHttp } from "../../src/tenant/tenant-http.js";
 import type { SnapshotStore } from "../../src/snapshot-store.js";
 import { startRealD1, type RealD1 } from "./real-d1.js";
+import { contractProcedures, seedDocumentWithVersion } from "./walk-fixtures.js";
 
 const ORIGIN = "http://127.0.0.1:8795";
 const session: TenantContext = { tenantId: "t-local", principalId: "user-local", transport: "session", sessionHash: "h" };
@@ -29,7 +30,6 @@ const agent: TenantContext = {
   scopes: ["documents:read", "comments:read", "comments:reply", "versions:submit"],
 };
 
-interface Route { readonly method?: string; readonly path?: string }
 interface Fixture { readonly body: unknown; readonly headers?: Record<string, string> }
 
 const message = (text: string) => ({ text, richContent: null, attachments: [] });
@@ -66,7 +66,7 @@ beforeEach(async () => {
     threads: new D1TenantThreadRepository(real.db),
     validateLocation: createLocationValidator(),
   });
-  await seedDocumentWithVersion("doc-1");
+  await seedDocumentWithVersion(real.db, "doc-1");
   // appendComment needs a thread to exist; the session creates it before any count is taken.
   const thread = await send("POST", "/api/v1/tenants/t-local/documents/doc-1/threads",
     { body: { baseVersionIdx: 0, content: message("seed"), location: null }, headers: { "idempotency-key": "seed-thread" } }, session);
@@ -81,16 +81,8 @@ afterEach(async () => {
   await real.dispose();
 });
 
-/** Every contract procedure with its dotted path, found by walking the router object. */
-function procedures(node: unknown, prefix: string[] = []): { name: string; route: Route }[] {
-  if (typeof node !== "object" || node === null) return [];
-  const orpc = (node as { "~orpc"?: { route?: Route } })["~orpc"];
-  if (orpc) return [{ name: prefix.join("."), route: orpc.route ?? {} }];
-  return Object.entries(node).flatMap(([key, child]) => procedures(child, [...prefix, key]));
-}
-
 function writeProcedures() {
-  return procedures(tenantApiContract).filter(({ route }) => (route.method ?? "POST").toUpperCase() !== "GET");
+  return contractProcedures(tenantApiContract).filter(({ route }) => (route.method ?? "POST").toUpperCase() !== "GET");
 }
 
 function pathFor(name: string, template: string): string {
@@ -116,38 +108,6 @@ async function rowCounts(): Promise<Record<string, number>> {
     counts[name] = (await real.db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).first<{ n: number }>())?.n ?? 0;
   }
   return counts;
-}
-
-async function seedDocumentWithVersion(documentId: string) {
-  await real.db.prepare(
-    "INSERT OR IGNORE INTO portal_document_types (document_type, internal_name, enabled, registration_json, created_at) VALUES ('markdown', 'markdown', 1, '{}', '2026-09-14T00:00:00.000Z')",
-  ).run();
-  await real.db.prepare(
-    "INSERT OR IGNORE INTO portal_document_contracts (document_type, document_contract_idx, contract_hash, record_json, created_at) VALUES ('markdown', 0, 'sha256:contract', ?, 0)",
-  ).bind(JSON.stringify({
-    documentType: "markdown",
-    documentContractIdx: 0,
-    formatVersion: 1,
-    snapshot: {
-      contentType: "application/vnd.unidocs.markdown.snapshot+cbor;version=1",
-      schema: { $schema: "https://schemas.unidocs.dev/svalue/v1" },
-      schemaHash: "sha256:snapshot",
-    },
-    location: {
-      contentType: "application/vnd.unidocs.markdown.location+json;version=1",
-      schema: { $schema: "https://schemas.unidocs.dev/svalue/v1", type: "object" },
-      schemaHash: "sha256:location",
-    },
-    contractHash: "sha256:contract",
-    createdAt: "2026-09-14T00:00:00.000Z",
-  })).run();
-  await real.db.prepare(
-    "INSERT INTO portal_documents (tenant_id, document_id, name, document_type, current_version_idx, created_at) VALUES ('t-local', ?, 'Notes', 'markdown', 0, 1757808000)",
-  ).bind(documentId).run();
-  await real.db.prepare(
-    `INSERT INTO portal_versions (tenant_id, document_id, version_idx, parent_version_idx, document_contract_idx, author_agent_id, submission_id, addressed_comments_json, snapshot_blob_hash, snapshot_size, snapshot_content_type, created_at)
-     VALUES ('t-local', ?, 0, NULL, 0, 'agent:test', 'sub-0', '[]', 'hash', 4, 'application/vnd.unidocs.markdown.snapshot+cbor;version=1', 1757808000)`,
-  ).bind(documentId).run();
 }
 
 it("refuses an Agent bearer with 403 on every non-GET procedure in tenantApiContract, writing nothing", async () => {
