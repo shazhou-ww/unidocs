@@ -1,5 +1,6 @@
 /**
- * 视觉基线是 docs/design/unidocs-mock.css（复制为 ./mock-base.css，未改动）。
+ * 视觉基线是 docs/design/unidocs-mock.css（复制为 ./mock-base.css）。唯一的例外是
+ * .primary 按钮规则的选择器，扩到同时覆盖 a.primary（登录链接要用同一套按钮视觉）。
  * 本文件只做两件事：补上 mock 没有的分屏对照与讨论面板样式，并复用它的 token。
  * 不要在这里重复定义 mock 已有的东西。
  */

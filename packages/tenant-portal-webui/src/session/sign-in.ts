@@ -11,14 +11,13 @@ const LOGIN_PATH = "/portal/auth/login";
 const OUTCOMES = new Set(["denied", "failed", "unavailable"]);
 
 /**
- * 服务端只接受以 /portal/ 开头的 returnTo，所以外壳的其它入口（/portal、
- * /portal/index.html）先统一成 /portal/。hash 原样带上：hash 路由的位置服务端
- * 看不到，只能靠这里带过去，登录回来才能回到原来那条评论。
+ * 服务端只接受以 /portal/ 开头的 returnTo，而外壳只会挂在 /portal、/portal/、
+ * /portal/index.html 这三个入口上——其它任何路径 worker 都会 404。所以除了正好是
+ * /portal/ 的情况，一律折成 /portal/，不只是排掉 index.html 这一个特例。hash 原样
+ * 带上：hash 路由的位置服务端看不到，只能靠这里带过去，登录回来才能回到原来那条评论。
  */
 export function loginHref(location: { readonly pathname: string; readonly hash: string }): string {
-  const pathname = location.pathname.startsWith("/portal/") && location.pathname !== "/portal/index.html"
-    ? location.pathname
-    : "/portal/";
+  const pathname = location.pathname === "/portal/" ? location.pathname : "/portal/";
   return `${LOGIN_PATH}?returnTo=${encodeURIComponent(pathname + location.hash)}`;
 }
 

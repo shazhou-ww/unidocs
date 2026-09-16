@@ -10,7 +10,7 @@ describe("loginHref", () => {
       .toBe(`/portal/auth/login?returnTo=${encodeURIComponent("/portal/#/d/doc%201/th-1/0")}`);
   });
 
-  it.each(["/portal", "/portal/index.html", "/elsewhere", ""])("normalizes the shell path %j to /portal/", pathname => {
+  it.each(["/portal", "/portal/index.html", "/portal/foo", "/elsewhere", ""])("normalizes the shell path %j to /portal/", pathname => {
     expect(loginHref({ pathname, hash: "" })).toBe(`/portal/auth/login?returnTo=${encodeURIComponent("/portal/")}`);
   });
 });
