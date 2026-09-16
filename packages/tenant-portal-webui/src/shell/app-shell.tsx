@@ -4,10 +4,10 @@
  * 侧边栏的标签导航在本轮不接真实数据（tag 还没有进 tenant 协议），只渲染「我的作品」
  * 这一项和底部身份块；标签区留空而不是伪造条目。
  */
-import { FileText, LayoutGrid, LockKeyhole } from "lucide-react";
+import { FileText, LayoutGrid, LockKeyhole, LogOut } from "lucide-react";
 import seal from "../assets/studio-seal.svg";
 
-export function Sidebar(props: { documentCount: number | null }) {
+export function Sidebar(props: { documentCount: number | null; onSignOut?: () => void }) {
   return (
     <aside className="sidebar" id="sidebar">
       <a href="#/" className="brand">
@@ -33,6 +33,12 @@ export function Sidebar(props: { documentCount: number | null }) {
           </div>
           <LockKeyhole size={13} aria-hidden="true" />
         </div>
+        {props.onSignOut && (
+          <button type="button" className="nav-item" onClick={props.onSignOut}>
+            <LogOut size={14} aria-hidden="true" />
+            退出
+          </button>
+        )}
         {import.meta.env.VITE_TENANT_FIXTURE === "memory" && <div className="prototype">演示工作空间</div>}
       </div>
     </aside>

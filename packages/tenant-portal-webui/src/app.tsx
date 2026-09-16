@@ -19,7 +19,7 @@ function useHashRoute(): Route {
   return route;
 }
 
-export function App(props: { client: TenantPortalClient }) {
+export function App(props: { client: TenantPortalClient; onSignOut?: () => void }) {
   const route = useHashRoute();
   const [documentCount, setDocumentCount] = useState<number | null>(null);
 
@@ -34,7 +34,7 @@ export function App(props: { client: TenantPortalClient }) {
         </div>
       </section>
       <div id="app" className="app">
-        <Sidebar documentCount={documentCount} />
+        <Sidebar documentCount={documentCount} onSignOut={props.onSignOut} />
         <main className="main">
           {route.kind === "workbench"
             ? <WorkbenchPage onDocumentCount={setDocumentCount} />
