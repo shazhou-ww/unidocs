@@ -145,3 +145,25 @@
   .doc-workspace.compare .content-area { grid-template-columns: 1fr; }
   .doc-workspace.compare .pane-base { border-right: 0; border-bottom: 1px solid var(--line); }
 }
+
+/* ── 未登录整页 ─────────────────────────────────────────────────────
+ * 复用外壳左上角的构图（印章字标 + 绿点工作区行），左对齐在一个 340px
+ * 的 measure 里，整块视觉居中。刻意不做居中卡片：这个界面里有边框有圆角
+ * 的容器是文档本身，chrome 不是。
+ */
+
+.sign-in { min-height: 100dvh; display: grid; place-items: center; padding: 32px 20px; }
+.sign-in-block { width: min(340px, 100%); animation: arrive .3s ease both; }
+.sign-in .brand { padding: 0; }
+.sign-in .workspace { margin: 14px 0 30px; }
+
+.sign-in h1 { margin: 0; font-size: 21px; font-weight: 550; line-height: 1.7; overflow-wrap: anywhere; }
+.sign-in-lede { margin: 6px 0 0; color: var(--muted); }
+
+.sign-in-action { margin-top: 26px; width: 100%; }
+
+.sign-in-outcome { display: flex; align-items: flex-start; gap: 8px; margin: 26px 0 0; padding-top: 18px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.sign-in-dot { width: 6px; height: 6px; margin-top: 6px; flex-shrink: 0; border-radius: 50%; }
+.sign-in-dot-refused { background: var(--red); }
+.sign-in-dot-idle { background: var(--muted); }
+.sign-in-request { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); user-select: all; }

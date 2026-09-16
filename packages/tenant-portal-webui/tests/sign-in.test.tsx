@@ -36,18 +36,29 @@ describe("SignedOutNotice", () => {
 
   it("offers Google sign-in back to the current location", () => {
     render(<SignedOutNotice outcome={null} location={location} />);
-    expect(screen.getByRole("heading", { name: "需要登录后才能查看" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "进入你的工作空间" })).toBeInTheDocument();
+    expect(screen.getByText("首次登录会为你创建一个新空间。")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "使用 Google 账号登录" })).toHaveAttribute("href", loginHref(location));
   });
 
   it.each([
-    ["denied", "这个账号还没有加入工作区"],
+    ["denied", "这个邮箱已经绑定了另一个 Google 账号"],
     ["failed", "登录没有完成，请重试"],
-    ["unavailable", "登录暂不可用，请稍后再试"],
+    ["unavailable", "登录暂时不可用，请稍后再试"],
   ] as const)("explains login=%s and shows the request id", (kind, message) => {
     render(<SignedOutNotice outcome={{ kind, requestId: "req-42" }} location={location} />);
     expect(screen.getByText(message)).toBeInTheDocument();
     expect(screen.getByText(/req-42/)).toBeInTheDocument();
+  });
+
+  it.each(["denied", "failed", "unavailable"] as const)("announces the outcome for login=%s via role=status", kind => {
+    render(<SignedOutNotice outcome={{ kind, requestId: null }} location={location} />);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("renders no outcome line when there is none", () => {
+    render(<SignedOutNotice outcome={null} location={location} />);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
 
