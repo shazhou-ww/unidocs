@@ -96,6 +96,21 @@ describe("createDraftStore", () => {
     expect(store.list()).toHaveLength(1);
   });
 
+  it("keeps the v1 key when the merged write fails partway (quota exceeded), so nothing is lost", () => {
+    const legacyKey = "unidocs.portal.drafts.v1";
+    const backing = new Map<string, string>([[legacyKey, JSON.stringify([draft({ draftId: "legacy" })])]]);
+    const partial = {
+      getItem: (key: string) => backing.get(key) ?? null,
+      setItem: () => { throw new Error("QuotaExceededError"); },
+      removeItem: (key: string) => { backing.delete(key); },
+    } as unknown as Storage;
+
+    const store = createDraftStore(partial, TEST_DRAFT_SCOPE);
+
+    expect(store.list().map(item => item.draftId)).toEqual(["legacy"]);
+    expect(backing.get(legacyKey)).toBeDefined();
+  });
+
   it("keeps each identity's drafts apart on a shared browser", () => {
     createDraftStore(localStorage, { tenantId: "t1", principalId: "user:a" }).save(draft({ text: "A 的草稿" }));
     expect(createDraftStore(localStorage, { tenantId: "t1", principalId: "user:b" }).list()).toEqual([]);

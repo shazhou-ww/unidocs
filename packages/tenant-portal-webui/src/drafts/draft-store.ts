@@ -68,28 +68,36 @@ export function createDraftStore(storage: Storage, scope: DraftScope): DraftStor
 
   /**
    * 生产此前没有租户面，v1 草稿只可能来自本地开发。第一次以某个身份加载时并入它，
-   * 已有同 draftId 的以 v2 为准，然后删掉 v1，别的身份不会再看到。
+   * 已有同 draftId 的以 v2 为准。v1 只有在合并结果确实落盘之后才删——如果 setItem
+   * 半路失败（比如配额满了），v1 留着，草稿还能在下次加载时重新合并，不会两边都丢。
    */
   function migrateLegacy(): void {
     let legacy: Draft[];
     try {
       if (storage.getItem(LEGACY_STORAGE_KEY) === null) return;
       legacy = read(LEGACY_STORAGE_KEY);
-      storage.removeItem(LEGACY_STORAGE_KEY);
     } catch {
       return;
     }
     const known = new Set(cache.map(item => item.draftId));
     const moved = legacy.filter(item => !known.has(item.draftId));
-    if (moved.length > 0) write([...cache, ...moved]);
+    const persisted = moved.length === 0 || write([...cache, ...moved]);
+    if (!persisted) return;
+    try {
+      storage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      // 删不掉就留着，下次加载再合并一次；不会因为删除失败而丢草稿。
+    }
   }
 
-  function write(drafts: Draft[]): void {
+  function write(drafts: Draft[]): boolean {
     cache = drafts;
     try {
       storage.setItem(storageKey, JSON.stringify(drafts));
+      return true;
     } catch {
       // 只保留内存副本。
+      return false;
     }
   }
 
