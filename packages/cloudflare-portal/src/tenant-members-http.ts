@@ -59,6 +59,12 @@ export function createTenantMembersHttp(repository: TenantMemberRepository) {
       } catch {
         return invalid();
       }
+    } else if (request.method !== "GET" && request.body !== null) {
+      // The session-revocations POST and the DELETE take no body. ORPC's
+      // OpenAPI codec reads the request body regardless of whether the
+      // contract declares one, so a body here would be buffered unbounded
+      // before any validation runs. Refuse it outright, without reading it.
+      return invalid();
     }
 
     const handler = new OpenAPIHandler(router, {

@@ -161,6 +161,16 @@ describe("tenant members admin API (real D1)", () => {
     expect(await store.find(hash, NOW)).not.toBeNull();
   });
 
+  it("refuses an unbounded body on session-revocations without reading it or deleting sessions", async () => {
+    const created = await add();
+    const { store, hash } = await bindAndSignIn(created.memberId);
+    const response = await handle(new Request(`${ORIGIN}/admin/api/v1/tenant-members/${created.memberId}/session-revocations`, {
+      method: "POST", headers: { "idempotency-key": "k" }, body: "x".repeat(1_000_000),
+    }), admin, "req-large-body");
+    expect(response.status).toBe(400);
+    expect(await store.find(hash, NOW)).not.toBeNull();
+  });
+
   it("refuses a body with extra fields or a non-JSON content type", async () => {
     expect((await call("POST", "/tenant-members", { body: { tenantId: "t1", email: "a@example.com", role: "owner" } })).status).toBe(400);
     const text = await handle(new Request(`${ORIGIN}/admin/api/v1/tenant-members`, {

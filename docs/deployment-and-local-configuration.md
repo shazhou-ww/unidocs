@@ -406,6 +406,45 @@ Documents written under the dev session belong to `user-local`; signing in with
 Google gives a different principal in the same tenant, which still sees every
 document.
 
+### Tenant console go-live in production
+
+`wrangler.production.jsonc` routes `/portal`, `/portal/*`, and
+`/api/v1/tenants/*` to the portal worker, but sign-in and document creation
+only work once the data plane is configured. Do these in order before anyone
+is invited:
+
+1. In Google Cloud Console, add
+   `https://unidocs.shazhou.work/portal/auth/callback` as an authorized
+   redirect URI for `GATEWAY_OIDC_CLIENT_ID`. Without it every callback fails.
+2. Configure the first tenant's UniCAS values and set the portal secrets:
+   `AGENT_TENANT_ID` and `CAS_ORIGIN`/`CAS_STACK_ID`/`CAS_ISSUER`/
+   `CAS_AUDIENCE`/`CAS_REF_DOMAIN`/`CAS_SIGNING_KID` as `vars`, then
+   `wrangler secret put AGENT_API_TOKEN` and
+   `wrangler secret put CAS_SIGNING_KEY` on the portal worker.
+3. Give the production markdown worker its side of the Operator loop:
+   `PLATFORM_SERVICE` service binding to `unidocs-portal`, `PLATFORM_ORIGIN`,
+   `PLATFORM_AGENT_TOKEN` (same value as the portal's `AGENT_API_TOKEN`), and
+   `OPERATOR_CAS_*` for the Operator's own UniCAS credentials.
+4. Apply the D1 migrations — `wrangler deploy` does not do this for you:
+
+   ```powershell
+   pnpm --filter @unidocs/cloudflare-portal exec wrangler d1 migrations apply unidocs-portal --remote
+   ```
+
+5. Deploy the markdown worker first, then the portal worker, so the Operator
+   loop is ready before the new routes go live.
+6. Invite the first tenant member through the admin API
+   (`POST /admin/api/v1/tenant-members`).
+7. Have that member sign in at `/portal/auth/login`, create a document, and
+   confirm the Operator produces its first version.
+8. Spot-check that `/ui/*` and `/tenants/*` still reach the gateway worker —
+   the new routes are more specific and should not have taken anything from
+   its catch-all, but this is the moment to confirm it.
+
+Only one tenant can go live per deploy: `AGENT_TENANT_ID` is a single value,
+so the Operator works for one tenant at a time until the Agent credential
+design is revisited.
+
 ## Local UniCAS configuration
 
 `pnpm dev unicas` uses a mock OIDC provider by default. To use Google locally,

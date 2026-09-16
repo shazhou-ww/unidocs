@@ -147,8 +147,7 @@ beforeEach(async () => {
     MARKDOWN_OPERATOR_HMAC_KEY: "",
     ADMIN_MARKDOWN_SERVICE: {},
   } as unknown as Env;
-  const original = globalThis.fetch;
-  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url === "https://accounts.google.com/.well-known/openid-configuration") {
       return Response.json({
@@ -159,7 +158,7 @@ beforeEach(async () => {
       });
     }
     if (/^https:\/\/([a-z0-9-]+\.)*(google|googleapis)\.com\//.test(url)) throw new Error(`T2 must not reach Google: ${url}`);
-    return original(input, init);
+    throw new Error(`T2 must not reach the network: ${url}`);
   });
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
