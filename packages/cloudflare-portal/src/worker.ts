@@ -267,13 +267,14 @@ export default {
       if (mcpResponse) return mcpResponse;
       if (new URL(request.url).origin === env.BUNDLE_ORIGIN) return serveBundleObject(request, env.BUNDLES, env.PORTAL_ORIGIN);
       // Ahead of the BFF, and ahead of reading the Google settings: the tenant
-      // UI has no login to gate it with (see `serveTenantWebUi`), the
-      // admin-shaped BFF would send an anonymous visitor to `/admin/login`,
-      // and it should still serve on an environment that has no Google client
-      // configured at all.
+      // shell is public on purpose (its routes are hash routes the server never
+      // sees, so a server-side gate would lose a deep link across sign-in; the
+      // gate is on the tenant API), the admin-shaped BFF would send an anonymous
+      // visitor to `/admin/login`, and it should still serve on an environment
+      // that has no Google client configured at all.
       // The bare origin is what a developer opens first, and it has no page of
-      // its own. Production routes only /admin, /mcp and the OAuth paths to this
-      // worker (wrangler.production.jsonc), so this only ever answers locally.
+      // its own. Production does not route `/` to this worker
+      // (wrangler.production.jsonc), so this only ever answers locally.
       if (requestPath === "/" && (request.method === "GET" || request.method === "HEAD")) {
         const requestId = crypto.randomUUID();
         console.log(JSON.stringify({ event: "portal_request", requestId, path: requestPath, status: 302 }));

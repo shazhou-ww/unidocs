@@ -34,6 +34,18 @@
       "zone_name": "shazhou.work"
     },
     {
+      "pattern": "unidocs.shazhou.work/portal",
+      "zone_name": "shazhou.work"
+    },
+    {
+      "pattern": "unidocs.shazhou.work/portal/*",
+      "zone_name": "shazhou.work"
+    },
+    {
+      "pattern": "unidocs.shazhou.work/api/v1/tenants/*",
+      "zone_name": "shazhou.work"
+    },
+    {
       "pattern": "bundles.shazhou.work",
       "custom_domain": true
     }
