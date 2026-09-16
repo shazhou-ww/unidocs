@@ -387,6 +387,25 @@ repository `.wrangler/` directory so local state and the credential are visible:
 pnpm dev unidocs-cloudflare --docker
 ```
 
+### Tenant console sign-in (`pnpm dev portal`)
+
+The tenant console at `/portal/` needs a tenant session. Locally there are two
+ways to get one:
+
+- **Real Google sign-in (default).** Set `PORTAL_BOOTSTRAP_EMAIL` and the Google
+  client in `packages/cloudflare-portal/.dev.vars`. On every boot the seed adds
+  that email as a member of tenant `t-local`, so it can sign in through
+  `/portal/auth/login`. The Google client must list the loopback callback
+  `http://127.0.0.1:<portal port>/portal/auth/callback`.
+- **Dev session switch.** Set `PORTAL_TENANT_DEV_SESSION=true` in the same file.
+  Any visit without a session cookie is handed a `t-local` / `user-local`
+  session. It only works on a loopback `PORTAL_ORIGIN`, and "sign out" does not
+  stick while it is on.
+
+Documents written under the dev session belong to `user-local`; signing in with
+Google gives a different principal in the same tenant, which still sees every
+document.
+
 ## Local UniCAS configuration
 
 `pnpm dev unicas` uses a mock OIDC provider by default. To use Google locally,

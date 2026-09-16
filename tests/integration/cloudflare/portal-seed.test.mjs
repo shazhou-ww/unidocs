@@ -23,6 +23,7 @@ const PORTS = { gateway: 19487, markdown: 19488, admin: 19492, mockOidc: 19493, 
 const RESUME_PORTS = { gateway: 19587, markdown: 19588, admin: 19592, mockOidc: 19593, edge: 19594, portal: 19595, portalBundles: 19596 };
 const BOOTSTRAP_EMAIL = "portal-seed-owner@example.test";
 const SEED_EMAIL = "seed@unidocs.local";
+const LOCAL_TENANT_ID = "t-local";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -112,6 +113,9 @@ describe("seeding an empty portal database", () => {
     ].sort(byEmail));
     // Claiming it would lock the real bootstrap email out of local sign-in for good.
     expect(await count(runtime, "portal_bootstrap")).toBe(0);
+
+    const members = await db.prepare("SELECT email FROM portal_tenant_members WHERE added_by != 'dev-session'").all();
+    expect(members.results).toEqual(fileBootstrapEmail ? [{ email: fileBootstrapEmail }] : []);
   });
 
   test("a second run returns the same type and adds no rows, and invites a configured bootstrap email", async () => {
@@ -152,6 +156,14 @@ describe("seeding an empty portal database", () => {
       ...(fileBootstrapEmail ? [{ email: fileBootstrapEmail, subject: null }] : []),
     ].sort(byEmail));
     expect(await count(runtime, "portal_bootstrap")).toBe(0);
+
+    // The same account can then sign in to the tenant console, as a member of
+    // the local tenant, instead of relying on the dev session switch.
+    const members = await db.prepare("SELECT tenant_id, email, subject, active FROM portal_tenant_members WHERE added_by != 'dev-session' ORDER BY email").all();
+    expect(members.results).toEqual([
+      { tenant_id: LOCAL_TENANT_ID, email: BOOTSTRAP_EMAIL, subject: null, active: 1 },
+      ...(fileBootstrapEmail ? [{ tenant_id: LOCAL_TENANT_ID, email: fileBootstrapEmail, subject: null, active: 1 }] : []),
+    ].sort(byEmail));
 
     const catalog = await tenantDocumentTypes(runtime);
     expect(catalog.items.map(item => item.documentType)).toEqual([documentType]);
