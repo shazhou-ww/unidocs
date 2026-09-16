@@ -496,6 +496,10 @@ export async function startLocalRuntime({
   // 眼下唯一的调用方是想钉死某条回退链的集成测试。
   bindingDefaults = {},
   bundleEntryOverrides = {},
+  // 打开 portal 的本地免登录(PORTAL_TENANT_DEV_SESSION)。默认关闭:`pnpm dev
+  // portal` 走真实 Google 登录,要免登录就在 packages/cloudflare-portal/.dev.vars
+  // 里打开;集成测试需要现成的 t-local 会话时显式传 true。.dev.vars 里的值优先。
+  tenantDevSession = false,
 } = {}) {
   validateGatewayOAuthFixture(gatewayOAuth);
   const resolvedStackFixture = stackFixture
@@ -564,6 +568,7 @@ export async function startLocalRuntime({
       operatorSecrets[component.name] = resolveOperatorSecrets({ processEnv: process.env, devVars });
     }
     serviceDevVars[component.name] = {
+      ...(component.name === "portal" && tenantDevSession ? { PORTAL_TENANT_DEV_SESSION: "true" } : {}),
       ...devVars,
       // The portal reads snapshot blobs out of UniCAS under the stack's own
       // authority - the same fixture seedMiddlewareStacks just registered

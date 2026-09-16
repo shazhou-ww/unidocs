@@ -27,6 +27,7 @@
     "CAS_AUDIENCE": "",
     "CAS_REF_DOMAIN": "",
     "CAS_SIGNING_KID": "",
+    "PORTAL_TENANT_DEV_SESSION": "",
     "AGENT_TENANT_ID": ""
   },
   "secrets": {

@@ -44,6 +44,16 @@ GATEWAY_OIDC_CLIENT_SECRET=
 
 PORTAL_BOOTSTRAP_EMAIL=
 
+# Local sign-in shortcut for the tenant console. Off by default: `pnpm dev
+# portal` then signs in with real Google (the seed adds PORTAL_BOOTSTRAP_EMAIL
+# as a member of t-local). Set to "true" to get a t-local / user-local session
+# without signing in; it only works on a loopback PORTAL_ORIGIN. While it is on,
+# "sign out" only ends the current session: the console's next session probe
+# carries no cookie and is handed a fresh dev session. Turn it off to test real
+# sign-in and sign-out.
+#
+# PORTAL_TENANT_DEV_SESSION=true
+
 # The markdown Operator loop. `pnpm dev portal` starts the markdown worker
 # beside the portal and generates both values on every boot, handing the same
 # ones to both workers — leave them unset unless something outside the runtime

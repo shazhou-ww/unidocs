@@ -78,6 +78,7 @@ describe("a fresh portal database", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath,
+      tenantDevSession: true,
     });
     db = await runtime.mf.getD1Database("DB", "unidocs-portal");
   }, 180_000);
@@ -184,6 +185,7 @@ describe("a second boot on the same portal database", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath,
+      tenantDevSession: true,
     });
     try {
       const db = await runtime.mf.getD1Database("DB", "unidocs-portal");
@@ -219,6 +221,7 @@ describe("the markdown Operator beside the portal", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath: operatorPersistPath,
+      tenantDevSession: true,
     });
   }, 180_000);
 

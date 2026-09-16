@@ -121,7 +121,11 @@ async function serveTenant(request: Request, env: Env, path: string, context?: E
     // Plain string vars: reading them cannot throw, and an unset one simply
     // refuses every bearer inside authenticateAgent.
     const agent = { agentToken: env.AGENT_API_TOKEN, agentTenantId: env.AGENT_TENANT_ID };
-    const session = await createTenantSessionHttp({ origin: env.PORTAL_ORIGIN, store, now, ...agent })(request, requestId);
+    const session = await createTenantSessionHttp({
+      origin: env.PORTAL_ORIGIN, store, now, ...agent,
+      // Unset in production config: `undefined === "true"` keeps it off.
+      devSession: env.PORTAL_TENANT_DEV_SESSION === "true",
+    })(request, requestId);
     if (session) {
       response = session;
     } else {

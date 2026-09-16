@@ -30,7 +30,7 @@ async function boot(ports, label) {
   // runtime.mjs keys its bundle directory by the gateway port and never cleans it.
   await rm(join(ROOT, ".wrangler", "local-bundles", String(ports.gateway)), { recursive: true, force: true });
   const persistPath = await mkdtemp(join(tmpdir(), `unidocs-portal-seed-${label}-`));
-  const runtime = await startLocalRuntime({ docTypes: [], services: ["portal"], ports, persistPath });
+  const runtime = await startLocalRuntime({ docTypes: [], services: ["portal"], ports, persistPath, tenantDevSession: true });
   // The environment override is cleared above, but a developer's own
   // packages/cloudflare-portal/.dev.vars may still bind one, and the seed
   // rightly invites whatever is bound. Expected rows account for it, so the

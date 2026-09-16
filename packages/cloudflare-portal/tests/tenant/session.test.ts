@@ -7,6 +7,8 @@ import {
   TENANT_SESSION_COOKIE,
   TENANT_SESSION_TTL_SECONDS,
 } from "../../src/tenant/session.js";
+import { hashSessionSecret } from "../../src/auth.js";
+import { insertMember } from "./members.js";
 import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const ORIGIN = "http://127.0.0.1:8795";
@@ -19,6 +21,7 @@ let store: D1TenantSessionStore;
 beforeEach(async () => {
   real = await startRealD1();
   store = new D1TenantSessionStore(real.db);
+  await insertMember(real.db, { tenantId: "t-local", principalId: "user-local", memberId: "member-user-local" });
 });
 
 afterEach(async () => {
@@ -46,7 +49,6 @@ describe("D1TenantSessionStore", () => {
 
   it("does not find a session past its expiry", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
-    const { hashSessionSecret } = await import("../../src/auth.js");
     const hash = await hashSessionSecret(token);
     expect(await store.find(hash, NOW + TENANT_SESSION_TTL_SECONDS - 1)).not.toBeNull();
     expect(await store.find(hash, NOW + TENANT_SESSION_TTL_SECONDS)).toBeNull();
@@ -54,15 +56,13 @@ describe("D1TenantSessionStore", () => {
 
   it("does not find a revoked session", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
-    const { hashSessionSecret } = await import("../../src/auth.js");
     const hash = await hashSessionSecret(token);
-    await store.revoke(hash);
+    await store.revoke(hash, "req-revoke", NOW);
     expect(await store.find(hash, NOW)).toBeNull();
   });
 
   it("does not find a session created after now", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW + 60);
-    const { hashSessionSecret } = await import("../../src/auth.js");
     const hash = await hashSessionSecret(token);
     expect(await store.find(hash, NOW)).toBeNull();
     expect(await store.find(hash, NOW + 60)).not.toBeNull();
@@ -72,6 +72,45 @@ describe("D1TenantSessionStore", () => {
     await expect(store.issue("t-local", "user-local", now)).rejects.toBeInstanceOf(TypeError);
     const row = await real.db.prepare("SELECT COUNT(*) AS n FROM portal_tenant_sessions").first<{ n: number }>();
     expect(row?.n).toBe(0);
+  });
+
+  it("finds no session once its member is deactivated", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW);
+    const hash = await hashSessionSecret(token);
+    expect(await store.find(hash, NOW)).not.toBeNull();
+    await real.db.prepare("UPDATE portal_tenant_members SET active = 0 WHERE member_id = 'member-user-local'").run();
+    expect(await store.find(hash, NOW)).toBeNull();
+  });
+
+  it("finds no session for a member who never bound a Google identity", async () => {
+    await insertMember(real.db, { tenantId: "t-local", principalId: "user:invited", bound: false });
+    const { token } = await store.issue("t-local", "user:invited", NOW);
+    expect(await store.find(await hashSessionSecret(token), NOW)).toBeNull();
+  });
+
+  it("finds no session for a principal with no member row", async () => {
+    const { token } = await store.issue("t-local", "user:stranger", NOW);
+    expect(await store.find(await hashSessionSecret(token), NOW)).toBeNull();
+  });
+
+  it("audits a revocation against the member and deletes the row", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW);
+    const hash = await hashSessionSecret(token);
+    await store.revoke(hash, "req-logout", NOW);
+    expect(await store.find(hash, NOW)).toBeNull();
+    const audit = await real.db.prepare("SELECT member_id, action, occurred_at, request_id FROM portal_tenant_auth_audit").all();
+    expect(audit.results).toEqual([{ member_id: "member-user-local", action: "session.revoked", occurred_at: NOW, request_id: "req-logout" }]);
+  });
+
+  it("issues a dev session that brings its own member row, and is idempotent about it", async () => {
+    await real.db.prepare("DELETE FROM portal_tenant_members").run();
+    const first = await store.issueDevSession(NOW);
+    const second = await store.issueDevSession(NOW + 1);
+    expect(await store.find(await hashSessionSecret(first.token), NOW + 1)).toMatchObject({ tenantId: "t-local", principalId: "user-local" });
+    expect(await store.find(await hashSessionSecret(second.token), NOW + 1)).not.toBeNull();
+    const members = await real.db.prepare("SELECT member_id, email, issuer, subject, active, added_by FROM portal_tenant_members").all();
+    expect(members.results).toEqual([{ member_id: "member-local-dev", email: "dev@unidocs.local", issuer: "local-dev", subject: "user-local", active: 1, added_by: "dev-session" }]);
+    expect((await real.db.prepare("SELECT COUNT(*) AS n FROM portal_tenant_auth_audit").first<{ n: number }>())?.n).toBe(0);
   });
 });
 

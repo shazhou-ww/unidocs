@@ -59,7 +59,7 @@ describe("the tenant data plane on a real portal worker", () => {
     // directory by the gateway port and never cleans it.
     await rm(join(ROOT, ".wrangler", "local-bundles", String(PORTS.gateway)), { recursive: true, force: true });
     persistPath = await mkdtemp(join(tmpdir(), "unidocs-portal-tenant-api-"));
-    runtime = await startLocalRuntime({ docTypes: [], services: ["portal"], ports: PORTS, persistPath });
+    runtime = await startLocalRuntime({ docTypes: [], services: ["portal"], ports: PORTS, persistPath, tenantDevSession: true });
   }, 180_000);
 
   afterAll(async () => {

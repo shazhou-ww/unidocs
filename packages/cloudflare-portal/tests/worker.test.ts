@@ -35,6 +35,7 @@ test("Worker fails closed before touching D1 when Google credentials are absent"
       get CAS_SIGNING_KEY(): never { throw new Error("CAS must not be touched"); },
       get AGENT_API_TOKEN(): never { throw new Error("Agent credential must not be touched"); },
       get AGENT_TENANT_ID(): never { throw new Error("Agent credential must not be touched"); },
+      get PORTAL_TENANT_DEV_SESSION(): never { throw new Error("Dev session switch must not be touched"); },
     };
     const response = await worker.fetch(new Request("https://unidocs.shazhou.work/admin/auth/login?code=never-log-this"), env);
     expect(response.status).toBe(503);
@@ -76,6 +77,7 @@ test.each(ADMIN_MCP_PATHS)("Worker MCP kill switch runs before Google credential
     get CAS_SIGNING_KEY(): never { throw new Error("Unexpected CAS access"); },
     get AGENT_API_TOKEN(): never { throw new Error("Unexpected Agent credential access"); },
     get AGENT_TENANT_ID(): never { throw new Error("Unexpected Agent credential access"); },
+    get PORTAL_TENANT_DEV_SESSION(): never { throw new Error("Unexpected dev session switch access"); },
   };
   const response = await worker.fetch(new Request("https://unidocs.shazhou.work" + path), env);
   expect(response.status).toBe(404);
@@ -205,6 +207,7 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
       ...Object.getOwnPropertyDescriptors(baseEnvWithoutOperatorConfig()),
       ...Object.getOwnPropertyDescriptors({
         DB: db,
+        PORTAL_TENANT_DEV_SESSION: "true",
         GATEWAY_OIDC_CLIENT_ID: "",
         GATEWAY_OIDC_CLIENT_SECRET: "",
         get CAS_ORIGIN(): never { throw new Error("CAS must not be touched"); },
@@ -384,5 +387,12 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("refuses a loopback session probe while the dev session switch is off", async () => {
+    const env = Object.defineProperties(tenantEnv(real.db), { PORTAL_TENANT_DEV_SESSION: { value: "" } });
+    const response = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`), env);
+    expect(response.status).toBe(401);
+    expect(response.headers.getSetCookie()).toEqual([]);
   });
 });
