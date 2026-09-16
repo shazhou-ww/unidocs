@@ -4,6 +4,7 @@ import { hashSessionSecret } from "./auth.js";
 import { GOOGLE_ISSUER, isLocalDevOrigin, type PortalGoogleConfig } from "./google-config.js";
 
 export const LOGIN_COOKIE = "__Host-unidocs_admin_login";
+export const TENANT_LOGIN_COOKIE = "__Host-unidocs_tenant_login";
 const loginLifetime = 600;
 const discoveryUrl = "https://accounts.google.com/.well-known/openid-configuration";
 const authorizationUrl = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -38,14 +39,27 @@ export interface PortalLoginPorts {
   readonly fetch?: typeof fetch;
 }
 
-export function portalReturnPath(value: string): string {
-  if (/^\/oauth\/admin-mcp\/authorize\?resume=[A-Za-z0-9_-]{43}$/.test(value)) return value;
-  if (value.length > 2048 || !value.startsWith("/admin/") || /[\\\u0000-\u0020\u007f]/.test(value)) throw new AdminAccessError("unauthorized");
+/**
+ * A same-origin path under `prefix`, never under `${prefix}auth`. Shared by
+ * both login surfaces so their return-path rules cannot drift apart.
+ */
+function scopedReturnPath(value: string, prefix: "/admin/" | "/portal/"): string {
+  const authPath = `${prefix}auth`;
+  if (value.length > 2048 || !value.startsWith(prefix) || /[\\\u0000-\u0020\u007f]/.test(value)) throw new AdminAccessError("unauthorized");
   const url = new URL(value, "https://portal.invalid");
   let pathname: string;
   try { pathname = decodeURIComponent(url.pathname); } catch { throw new AdminAccessError("unauthorized"); }
-  if (url.origin !== "https://portal.invalid" || !pathname.startsWith("/admin/") || pathname === "/admin/auth" || pathname.startsWith("/admin/auth/") || /[%\\\u0000-\u0020\u007f]/.test(pathname) || pathname.split("/").some(segment => segment === "." || segment === "..")) throw new AdminAccessError("unauthorized");
+  if (url.origin !== "https://portal.invalid" || !pathname.startsWith(prefix) || pathname === authPath || pathname.startsWith(`${authPath}/`) || /[%\\\u0000-\u0020\u007f]/.test(pathname) || pathname.split("/").some(segment => segment === "." || segment === "..")) throw new AdminAccessError("unauthorized");
   return url.pathname + url.search + url.hash;
+}
+
+export function portalReturnPath(value: string): string {
+  if (/^\/oauth\/admin-mcp\/authorize\?resume=[A-Za-z0-9_-]{43}$/.test(value)) return value;
+  return scopedReturnPath(value, "/admin/");
+}
+
+export function tenantReturnPath(value: string): string {
+  return scopedReturnPath(value, "/portal/");
 }
 
 function loginCookie(name: string, value: string, maxAge: number): string {
@@ -59,6 +73,13 @@ export function createPortalGoogleLogin(config: PortalGoogleConfig, ports: Porta
   });
 }
 
+export function createTenantGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts) {
+  return createGoogleLogin(config, ports, {
+    beginPath: "/portal/auth/login", callbackPath: "/portal/auth/callback", cookieName: TENANT_LOGIN_COOKIE,
+    returnParameter: "returnTo", defaultReturn: "/portal/", validateReturn: tenantReturnPath,
+  });
+}
+
 function createGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts, surface: {
   readonly beginPath: string;
   readonly callbackPath: string;
@@ -67,8 +88,9 @@ function createGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts, 
   readonly defaultReturn: string;
   readonly validateReturn: (value: string) => string;
 }) {
-  const localWebUi = surface.cookieName === LOGIN_COOKIE && isLocalDevOrigin(config.origin);
-  if (config.issuer !== GOOGLE_ISSUER || new URL(config.origin).origin !== config.origin || (!config.origin.startsWith("https://") && !localWebUi) || config.redirectUri !== `${config.origin}${surface.callbackPath}` || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
+  const redirectUri = `${config.origin}${surface.callbackPath}`;
+  const localWebUi = isLocalDevOrigin(config.origin);
+  if (config.issuer !== GOOGLE_ISSUER || new URL(config.origin).origin !== config.origin || (!config.origin.startsWith("https://") && !localWebUi) || !config.clientId.trim() || !config.clientSecret.trim()) throw new TypeError("Invalid Portal Google configuration");
 
   const boundedFetch: typeof fetch = async (input, init) => {
     const url = input instanceof Request ? input.url : String(input);
@@ -127,7 +149,7 @@ function createGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts, 
       const target = new URL(server.authorization_endpoint!);
       target.search = new URLSearchParams({
         client_id: config.clientId,
-        redirect_uri: config.redirectUri,
+        redirect_uri: redirectUri,
         response_type: "code",
         scope: "openid email",
         prompt: "select_account",
@@ -165,7 +187,7 @@ function createGoogleLogin(config: PortalGoogleConfig, ports: PortalLoginPorts, 
         stage = "authorization_response";
         const parameters = oauth.validateAuthResponse(server, client, url, state);
         stage = "token_exchange";
-        const response = await oauth.authorizationCodeGrantRequest(server, client, oauth.ClientSecretPost(config.clientSecret), parameters, config.redirectUri, transaction.verifier, requestOptions);
+        const response = await oauth.authorizationCodeGrantRequest(server, client, oauth.ClientSecretPost(config.clientSecret), parameters, redirectUri, transaction.verifier, requestOptions);
         stage = "token_response";
         const result = await oauth.processAuthorizationCodeResponse(server, client, response, { expectedNonce: transaction.nonce, requireIdToken: true });
         stage = "signature";

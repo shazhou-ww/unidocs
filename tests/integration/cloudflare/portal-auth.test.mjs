@@ -102,7 +102,7 @@ test("Portal Google PKCE callback executes in workerd with Gateway client settin
               if (url === metadata.jwks_uri) return Response.json({ keys: [{ ...env.FIXTURE.publicKey, kid: 'test', alg: 'RS256', use: 'sig' }] });
               if (url !== metadata.token_endpoint) throw new Error('Unexpected endpoint');
               const body = new URLSearchParams(String(init.body));
-              if (body.get('client_id') !== 'gateway-client' || body.get('code_verifier') !== pending.verifier || body.get('redirect_uri') !== config.redirectUri) throw new Error('Invalid code exchange');
+              if (body.get('client_id') !== 'gateway-client' || body.get('code_verifier') !== pending.verifier || body.get('redirect_uri') !== (config.origin + '/admin/auth/callback')) throw new Error('Invalid code exchange');
               tokenRequests++;
               const key = await importJWK(env.FIXTURE.privateKey, 'RS256');
               const token = await new SignJWT({ iss: config.issuer, aud: config.clientId, sub: 'subject', email: 'admin@example.com', email_verified: true,
@@ -112,7 +112,7 @@ test("Portal Google PKCE callback executes in workerd with Gateway client settin
           });
           const start = await login.begin(new Request('https://portal.test/admin/auth/login'));
           const authorization = new URL(start.headers.get('location'));
-          const callback = new Request(config.redirectUri + '?code=test&state=' + authorization.searchParams.get('state'), { headers: { cookie: start.headers.get('set-cookie').split(';')[0] } });
+          const callback = new Request((config.origin + '/admin/auth/callback') + '?code=test&state=' + authorization.searchParams.get('state'), { headers: { cookie: start.headers.get('set-cookie').split(';')[0] } });
           const completed = await login.complete(callback);
           let replayRejected = false;
           try { await login.complete(callback); } catch (error) { replayRejected = error.code === 'unauthorized'; }

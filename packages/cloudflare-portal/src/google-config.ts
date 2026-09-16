@@ -14,7 +14,6 @@ export interface PortalGoogleConfig {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly origin: string;
-  readonly redirectUri: string;
 }
 
 export function portalGoogleConfigFromGateway(settings: Readonly<Record<string, string | undefined>>, portalOrigin = PORTAL_PUBLIC_ORIGIN): PortalGoogleConfig {
@@ -29,5 +28,5 @@ export function portalGoogleConfigFromGateway(settings: Readonly<Record<string, 
   if (issuer !== GOOGLE_ISSUER) throw new TypeError("Portal requires the Google issuer");
   if (!clientId || !clientSecret?.trim()) throw new TypeError("Gateway Google OIDC client ID and secret are required");
 
-  return { issuer: GOOGLE_ISSUER, clientId, clientSecret, origin: portalOrigin, redirectUri: `${portalOrigin}/admin/auth/callback` };
+  return { issuer: GOOGLE_ISSUER, clientId, clientSecret, origin: portalOrigin };
 }
