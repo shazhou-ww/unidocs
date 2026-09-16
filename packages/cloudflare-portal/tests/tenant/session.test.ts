@@ -102,6 +102,26 @@ describe("D1TenantSessionStore", () => {
     expect(audit.results).toEqual([{ member_id: "member-user-local", action: "session.revoked", occurred_at: NOW, request_id: "req-logout" }]);
   });
 
+  it("takes over an existing member row at its natural key, making it canonical, when issuing a dev session", async () => {
+    // beforeEach already seeded "member-user-local" at (t-local, user-local)
+    // with its own generated email — a different member_id and a different
+    // email than the dev session's. That row IS the dev member per spec
+    // §4.4: issueDevSession must make it canonical rather than leaving it
+    // untouched or failing on the natural-key collision.
+    const before = await real.db.prepare("SELECT member_id, email FROM portal_tenant_members WHERE tenant_id = 't-local' AND principal_id = 'user-local'").first<{ member_id: string; email: string }>();
+    expect(before?.member_id).toBe("member-user-local");
+    expect(before?.email).not.toBe("dev@unidocs.local");
+
+    const { token } = await store.issueDevSession(NOW);
+
+    const rows = await real.db.prepare("SELECT member_id, tenant_id, principal_id, email, issuer, subject, active, added_by FROM portal_tenant_members WHERE tenant_id = 't-local' AND principal_id = 'user-local'").all();
+    expect(rows.results).toEqual([{
+      member_id: "member-user-local", tenant_id: "t-local", principal_id: "user-local",
+      email: "dev@unidocs.local", issuer: "local-dev", subject: "user-local", active: 1, added_by: "dev-session",
+    }]);
+    expect(await store.find(await hashSessionSecret(token), NOW)).toMatchObject({ tenantId: "t-local", principalId: "user-local" });
+  });
+
   it("issues a dev session that brings its own member row, and is idempotent about it", async () => {
     await real.db.prepare("DELETE FROM portal_tenant_members").run();
     const first = await store.issueDevSession(NOW);

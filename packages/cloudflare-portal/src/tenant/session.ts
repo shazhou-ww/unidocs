@@ -78,20 +78,25 @@ export class D1TenantSessionStore {
    * The local dev session. It goes through the same member check as any other
    * session, so it brings its own member row, (re)activated in the same batch.
    * Not audited: it is not a sign-in.
+   *
+   * The row AT the natural key (tenant_id, principal_id) is the dev member,
+   * whichever member_id it already has (member_id is the primary key and
+   * cannot change) — so the single conflict target is that natural key, and
+   * every other canonical field is restored on conflict. Deliberately no
+   * conflict target for the (email) WHERE active = 1 index: an unrelated
+   * active member already holding dev@unidocs.local is a misconfiguration
+   * (someone really invited that address), and this fails loudly rather than
+   * silently reactivating or renaming their row.
    */
   async issueDevSession(now: number): Promise<{ token: string; csrfToken: string }> {
     const { token, csrfToken, statement } = await this.prepareIssue(DEV_TENANT_ID, DEV_PRINCIPAL_ID, now);
     await this.db.batch([
-      // Two conflict targets: the ordinary case re-activates member-local-dev
-      // by its own id; if some other member row already occupies the
-      // (tenant, principal) natural key (only otherwise reachable in tests
-      // that seed one directly), that row is reactivated instead rather than
-      // failing the whole batch on the unrelated unique index.
       this.db.prepare(`INSERT INTO portal_tenant_members
           (member_id, tenant_id, principal_id, email, issuer, subject, active, added_by, created_at, updated_at)
         VALUES ('member-local-dev', ?, ?, 'dev@unidocs.local', 'local-dev', ?, 1, 'dev-session', ?, ?)
-        ON CONFLICT (member_id) DO UPDATE SET active = 1, updated_at = excluded.updated_at
-        ON CONFLICT (tenant_id, principal_id) DO UPDATE SET active = 1, updated_at = excluded.updated_at`)
+        ON CONFLICT (tenant_id, principal_id) DO UPDATE SET
+          active = 1, email = excluded.email, issuer = excluded.issuer, subject = excluded.subject,
+          added_by = excluded.added_by, updated_at = excluded.updated_at`)
         .bind(DEV_TENANT_ID, DEV_PRINCIPAL_ID, DEV_PRINCIPAL_ID, now, now),
       statement,
     ]);
