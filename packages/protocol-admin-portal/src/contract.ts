@@ -2,6 +2,7 @@ import { oc } from "@orpc/contract";
 import { z } from "zod";
 import {
   AddAdministratorMemberRequestSchema,
+  AddTenantMemberRequestSchema,
   AppendDocumentContractRequestSchema,
   AdminErrorDataSchema,
   AdministratorMemberAuditActions,
@@ -28,6 +29,8 @@ import {
   ListDocumentTypesResponseSchema,
   ListOperatorsResponseSchema,
   ListDocumentContractsResponseSchema,
+  ListTenantMembersQuerySchema,
+  ListTenantMembersResponseSchema,
   ListTypeCardBundlesResponseSchema,
   ListViewBundlesResponseSchema,
   MutationHeadersSchema,
@@ -35,6 +38,8 @@ import {
   OperatorMutationResultSchema,
   OperatorValidationSchema,
   PaginationQuerySchema,
+  TenantMemberAuditActions,
+  TenantMemberMutationResultSchema,
   TypeCardBundleRecordSchema,
   TypeCardBundleMutationResultSchema,
   UpdateCandidateMetadataRequestSchema,
@@ -117,6 +122,11 @@ export const AdminApiErrorMap = {
     message: "An administrator membership already exists for this email",
     data: AdminErrorDataSchema,
   },
+  TENANT_MEMBER_EXISTS: {
+    status: 409,
+    message: "An active tenant membership already exists for this email",
+    data: AdminErrorDataSchema,
+  },
   CANNOT_REMOVE_SELF: {
     status: 409,
     message: "An administrator cannot remove their own membership",
@@ -165,6 +175,9 @@ const documentContractParams = z.object({
 }).readonly();
 const administratorMemberParams = z.object({
   adminId: IdSchema.describe("Administrator membership to remove."),
+}).readonly();
+const tenantMemberParams = z.object({
+  memberId: IdSchema.describe("Tenant membership to address."),
 }).readonly();
 
 export const uploadTypeCardBundleContract = bundleUploadProcedure
@@ -556,6 +569,72 @@ export const removeAdministratorMemberContract = conditionalMutationProcedure.er
   }).readonly())
   .output(z.undefined());
 
+export const listTenantMembersContract = adminProcedure
+  .route({
+    method: "GET",
+    path: `${AdminApiV1BasePath}/tenant-members`,
+    operationId: "listTenantMembers",
+    summary: "List tenant members",
+    description: "Returns active tenant memberships, optionally for one tenant, with identity-binding status and current ETag.",
+    inputStructure: "detailed",
+    tags: ["Members"],
+  })
+  .input(z.object({ query: ListTenantMembersQuerySchema.optional() }).readonly())
+  .output(ListTenantMembersResponseSchema);
+
+export const addTenantMemberContract = idempotentMutationProcedure.errors({
+  TENANT_MEMBER_EXISTS: AdminApiErrorMap.TENANT_MEMBER_EXISTS,
+})
+  .route({
+    method: "POST",
+    path: `${AdminApiV1BasePath}/tenant-members`,
+    operationId: "addTenantMember",
+    summary: "Add a tenant member",
+    description: "Adds a normalized Google account email to one tenant and generates its principal. The identity stays unbound until that account signs in to the tenant console. An email can be an active member of only one tenant.",
+    inputStructure: "detailed",
+    successStatus: 201,
+    tags: ["Members"],
+  })
+  .input(z.object({
+    headers: MutationHeadersSchema,
+    body: AddTenantMemberRequestSchema,
+  }).readonly())
+  .output(TenantMemberMutationResultSchema);
+
+export const removeTenantMemberContract = conditionalMutationProcedure
+  .route({
+    method: "DELETE",
+    path: `${AdminApiV1BasePath}/tenant-members/{memberId}`,
+    operationId: "removeTenantMember",
+    summary: "Remove a tenant member",
+    description: "Deactivates one tenant membership under its current ETag and ends all of its sessions. The row is kept; adding the email again creates a new principal.",
+    inputStructure: "detailed",
+    successStatus: 204,
+    tags: ["Members"],
+  })
+  .input(z.object({
+    params: tenantMemberParams,
+    headers: ConditionalMutationHeadersSchema,
+  }).readonly())
+  .output(z.undefined());
+
+export const revokeTenantMemberSessionsContract = resourceMutationProcedure
+  .route({
+    method: "POST",
+    path: `${AdminApiV1BasePath}/tenant-members/{memberId}/session-revocations`,
+    operationId: "revokeTenantMemberSessions",
+    summary: "End every session of a tenant member",
+    description: "Signs the member out on every device without removing the membership, for example when an account may be compromised.",
+    inputStructure: "detailed",
+    successStatus: 204,
+    tags: ["Members"],
+  })
+  .input(z.object({
+    params: tenantMemberParams,
+    headers: MutationHeadersSchema,
+  }).readonly())
+  .output(z.undefined());
+
 export const listAdminAuditEventsContract = adminProcedure
   .route({
     method: "GET",
@@ -609,6 +688,12 @@ export const adminApiContract = {
     add: addAdministratorMemberContract,
     remove: removeAdministratorMemberContract,
   },
+  tenantMembers: {
+    list: listTenantMembersContract,
+    add: addTenantMemberContract,
+    remove: removeTenantMemberContract,
+    revokeSessions: revokeTenantMemberSessionsContract,
+  },
   audit: {
     list: listAdminAuditEventsContract,
   },
@@ -616,8 +701,9 @@ export const adminApiContract = {
 
 export type AdminApiContract = typeof adminApiContract;
 
-export { AdministratorMemberAuditActions, DocumentTypeAuditActions };
+export { AdministratorMemberAuditActions, DocumentTypeAuditActions, TenantMemberAuditActions };
 export type {
   AdministratorMemberAuditAction,
   DocumentTypeAuditAction,
+  TenantMemberAuditAction,
 } from "./schemas.js";

@@ -1,6 +1,9 @@
 import type { ContractRouterClient } from "@orpc/contract";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  AddTenantMemberRequestSchema,
+  AdminAuditActionSchema,
+  AdminAuditResourceTypeSchema,
   AppendDocumentContractRequestSchema,
   DocumentContentFormatVersion,
   DocumentContractRecordSchema,
@@ -9,6 +12,7 @@ import {
   EtagSchema,
   ExternalEtagSchema,
   SValueSchemaSchema,
+  TenantMemberAuditActions,
   TypeCardBundleManifestV1Schema,
   TypeCardIconPngV1Schema,
   UpdateDocumentTypeRequestSchema,
@@ -219,9 +223,9 @@ describe("administrator OpenAPI", () => {
     const operations = operationEntries(document);
 
     expect(document.openapi).toBe("3.1.1");
-    expect(Object.keys(document.paths ?? {})).toHaveLength(15);
-    expect(operations).toHaveLength(26);
-    expect(new Set(operations.map(({ operation }) => operation.operationId)).size).toBe(26);
+    expect(Object.keys(document.paths ?? {})).toHaveLength(18);
+    expect(operations).toHaveLength(30);
+    expect(new Set(operations.map(({ operation }) => operation.operationId)).size).toBe(30);
     expect(document.info.description).toContain("Administrator control-plane API");
     expect(document.tags?.map((tag) => tag.name)).toEqual([
       "Document types",
@@ -327,7 +331,7 @@ describe("administrator OpenAPI", () => {
     const document = await generateAdminOpenApiDocument();
     const mutations = operationEntries(document).filter(({ method }) => method !== "get");
 
-    expect(mutations).toHaveLength(12);
+    expect(mutations).toHaveLength(15);
     for (const { operation } of mutations) {
       expect(operation.security).toEqual([
         { adminBearer: [] },
@@ -490,4 +494,30 @@ describe("administrator OpenAPI", () => {
     expect(operation?.responses).toHaveProperty("200");
   });
 
+});
+
+describe("tenant member operations", () => {
+  it("exposes list, add, remove and session revocation under /tenant-members", async () => {
+    const document = await generateAdminOpenApiDocument();
+    const collection = document.paths?.["/admin/api/v1/tenant-members"];
+    const member = document.paths?.["/admin/api/v1/tenant-members/{memberId}"];
+    const revocations = document.paths?.["/admin/api/v1/tenant-members/{memberId}/session-revocations"];
+    expect(collection?.get?.operationId).toBe("listTenantMembers");
+    expect(collection?.post?.operationId).toBe("addTenantMember");
+    expect(member?.delete?.operationId).toBe("removeTenantMember");
+    expect(revocations?.post?.operationId).toBe("revokeTenantMemberSessions");
+    expect(parameterNames(member?.delete ?? {})).toEqual(expect.arrayContaining(["memberId", "idempotency-key", "if-match"]));
+    expect(Object.keys(collection?.post?.responses ?? {})).toContain("409");
+  });
+
+  it("accepts tenant member audit events", () => {
+    expect(AdminAuditActionSchema.options).toEqual(expect.arrayContaining([...TenantMemberAuditActions]));
+    expect(AdminAuditResourceTypeSchema.options).toContain("tenant_member");
+  });
+
+  it("requires a tenant and an email to add a member", () => {
+    expect(AddTenantMemberRequestSchema.safeParse({ tenantId: "t1", email: "a@example.com" }).success).toBe(true);
+    expect(AddTenantMemberRequestSchema.safeParse({ email: "a@example.com" }).success).toBe(false);
+    expect(AddTenantMemberRequestSchema.safeParse({ tenantId: "t1", email: "not-an-email" }).success).toBe(false);
+  });
 });

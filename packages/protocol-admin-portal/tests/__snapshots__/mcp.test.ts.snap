@@ -14,7 +14,7 @@ exports[`pins all tool input JSON schema fingerprints 1`] = `
   "get_operator_validation": "409a32976d74667dd8dec7e90ab72809cbc4cee665d61eaa196fc818c30f3412",
   "get_type_card_bundle": "d76f1c13d70fb9d2699ef58aa89495f26a38f6dbce1b34771d7667e23d2ce1c1",
   "get_view_bundle": "c18c2d79f2a3c273d39b9a366d57f2173c93b1fe19f2af4e7d3e96d4e68e3c9d",
-  "list_admin_audit_events": "131e60bbc838cc8cb2d76beb01c8baa650706bb813dd0641f96a586c62941c26",
+  "list_admin_audit_events": "c98e477ff11efa83444db9e112e82c330fc5f4de948a9772579b7abcb1bbe6b5",
   "list_administrators": "026d94fc463076067918977706c7fd9561976405c3a287cffd500f75d52af60f",
   "list_document_contracts": "dcd6b161b3b13052a83423268447022a214a18bd6eb10f232629b63a572a60ff",
   "list_document_types": "f899e2724d5a898c3ee7af5cb8ce35469d8f5553883e116951dd8c51d18aa91c",

@@ -113,14 +113,22 @@ export const AdministratorMemberAuditActions = [
   "administrator.removed",
 ] as const;
 
+export const TenantMemberAuditActions = [
+  "tenant_member.added",
+  "tenant_member.removed",
+  "tenant_member.sessions_revoked",
+] as const;
+
 export const AdminAuditActionSchema = z.enum([
   ...DocumentTypeAuditActions,
   ...AdministratorMemberAuditActions,
+  ...TenantMemberAuditActions,
 ]);
 
 export type AdminAuditAction = z.infer<typeof AdminAuditActionSchema>;
 export type DocumentTypeAuditAction = typeof DocumentTypeAuditActions[number];
 export type AdministratorMemberAuditAction = typeof AdministratorMemberAuditActions[number];
+export type TenantMemberAuditAction = typeof TenantMemberAuditActions[number];
 
 export const AdminAuditResourceTypeSchema = z.enum([
   "document_type",
@@ -130,6 +138,7 @@ export const AdminAuditResourceTypeSchema = z.enum([
   "operator",
   "operator_validation",
   "administrator",
+  "tenant_member",
 ]);
 
 export const AdminAuditEventSchema = z.object({
@@ -431,6 +440,19 @@ export const AdministratorMemberListItemSchema = AdministratorMemberRecordObject
 
 export type AdministratorMemberListItem = z.infer<typeof AdministratorMemberListItemSchema>;
 
+export const TenantMemberRecordSchema = z.object({
+  memberId: IdSchema.describe("Stable tenant membership identity."),
+  tenantId: IdSchema.describe("Tenant this membership grants access to."),
+  principalId: IdSchema.describe("Tenant principal the member acts as; never reused, even after removal."),
+  email: z.email().describe("Normalized Google account email allowed to sign in to the tenant console."),
+  bound: z.boolean().describe("Whether the member has bound a verified Google identity by signing in."),
+  addedBy: NonEmptyStringSchema.describe("Administrator identity that added this member."),
+  addedAt: IsoDateTimeSchema.describe("Time at which the membership was created."),
+  etag: EtagSchema.describe("Optimistic-concurrency token required to remove this member."),
+}).readonly().meta({ id: "TenantMemberRecord" });
+
+export type TenantMemberRecord = z.infer<typeof TenantMemberRecordSchema>;
+
 export const TypeCardBundleListItemSchema = TypeCardBundleRecordSchema.unwrap().omit({
   manifest: true,
 }).extend({
@@ -514,6 +536,9 @@ export const ListAdministratorMembersResponseSchema = pageSchema(AdministratorMe
   .meta({ id: "ListAdministratorMembersResponse" });
 export const ListAdminAuditEventsResponseSchema = pageSchema(AdminAuditEventSchema)
   .meta({ id: "ListAdminAuditEventsResponse" });
+export const ListTenantMembersResponseSchema = pageSchema(TenantMemberRecordSchema)
+  .meta({ id: "ListTenantMembersResponse" });
+export type ListTenantMembersResponse = z.infer<typeof ListTenantMembersResponseSchema>;
 
 export type ListTypeCardBundlesResponse = z.infer<typeof ListTypeCardBundlesResponseSchema>;
 export type ListViewBundlesResponse = z.infer<typeof ListViewBundlesResponseSchema>;
@@ -536,6 +561,10 @@ export const ListBundlesQuerySchema = PaginationQuerySchema.unwrap().extend({
 }).readonly();
 
 export type ListBundlesQuery = z.infer<typeof ListBundlesQuerySchema>;
+
+export const ListTenantMembersQuerySchema = PaginationQuerySchema.unwrap().extend({
+  tenantId: IdSchema.optional().describe("Only memberships of this tenant."),
+}).readonly();
 
 export const ListDocumentTypesQuerySchema = PaginationQuerySchema.unwrap().extend({
   q: z.string().optional().describe("Case-insensitive administrator search text."),
@@ -617,6 +646,19 @@ export const AddAdministratorMemberRequestSchema = z.object({
 export type AddAdministratorMemberRequest = z.infer<
   typeof AddAdministratorMemberRequestSchema
 >;
+
+export const AddTenantMemberRequestSchema = z.object({
+  tenantId: IdSchema.describe("Tenant to add the member to."),
+  email: z.email().describe("Google account email to add to the tenant."),
+}).readonly().meta({ id: "AddTenantMemberRequest" });
+
+export type AddTenantMemberRequest = z.infer<typeof AddTenantMemberRequestSchema>;
+
+export const TenantMemberMutationResultSchema = z.object({
+  memberId: IdSchema.describe("Created tenant membership identity."),
+  principalId: IdSchema.describe("Principal generated for the membership."),
+  etag: EtagSchema.describe("Current membership ETag."),
+}).readonly().meta({ id: "TenantMemberMutationResult" });
 
 export const UpdateDocumentTypeRequestSchema = z.object({
   internalName: NonEmptyStringSchema.optional().describe("Replacement administrator-only name."),

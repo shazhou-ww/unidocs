@@ -1,7 +1,7 @@
 import { startTransition, useEffect, useState, type FormEvent } from "react";
 import { AlertCircle, BookOpenText, Check, ChevronRight, CircleDashed, ExternalLink, FileText, Languages, LayoutTemplate, LoaderCircle, LogIn, LogOut, Menu, Pencil, Plus, RefreshCw, ScrollText, Search, ShieldAlert, Trash2, UploadCloud, UserPlus, Users, X } from "lucide-react";
 import { AdminPortalClientError, createAdminPortalClient, type AdminPortalSession } from "@unidocs/admin-portal-client";
-import { AdministratorMemberAuditActions, DocumentTypeAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type OperatorListItem, type OperatorRecord, type OperatorValidation, type TypeCardBundleListItem, type TypeCardBundleRecord, type ViewBundleListItem, type ViewBundleRecord } from "@unidocs/protocol-admin-portal";
+import { AdministratorMemberAuditActions, DocumentTypeAuditActions, TenantMemberAuditActions, type AdminAuditEvent, type AdministratorMemberListItem, type DocumentContractListItem, type DocumentContractRecord, type DocumentTypeListItem, type DocumentTypeRegistration, type OperatorListItem, type OperatorRecord, type OperatorValidation, type TypeCardBundleListItem, type TypeCardBundleRecord, type ViewBundleListItem, type ViewBundleRecord } from "@unidocs/protocol-admin-portal";
 
 const auditActionLabels: Record<AdminAuditEvent["action"], string> = {
   "type_card_bundle.uploaded": "上传类型卡片包",
@@ -17,6 +17,9 @@ const auditActionLabels: Record<AdminAuditEvent["action"], string> = {
   "administrator.bound": "绑定管理员身份",
   "administrator.added": "添加管理员",
   "administrator.removed": "移除管理员",
+  "tenant_member.added": "添加租户成员",
+  "tenant_member.removed": "移除租户成员",
+  "tenant_member.sessions_revoked": "强制租户成员下线",
   "document_type.registered": "创建文档类型",
   "document_type.internal_name_changed": "修改内部名称",
   "document_type.type_card_bundle_changed": "切换类型卡片包",
@@ -36,16 +39,18 @@ const resourceLabels: Record<AdminAuditEvent["resourceType"], string> = {
   view_bundle: "视图包",
   operator: "算子",
   operator_validation: "算子验证",
+  tenant_member: "租户成员",
 };
 
 function auditActionLabel(action: AdminAuditEvent["action"]) {
   return auditActionLabels[action];
 }
 
-const auditActions = [...AdministratorMemberAuditActions, ...DocumentTypeAuditActions];
+const auditActions = [...AdministratorMemberAuditActions, ...TenantMemberAuditActions, ...DocumentTypeAuditActions];
 
 function actionResource(action: AdminAuditEvent["action"]): AdminAuditEvent["resourceType"] {
   if (action.startsWith("administrator.")) return "administrator";
+  if (action.startsWith("tenant_member.")) return "tenant_member";
   if (action.startsWith("document_type.")) return "document_type";
   if (action.startsWith("document_contract.")) return "document_contract";
   if (action.startsWith("type_card_bundle.")) return "type_card_bundle";

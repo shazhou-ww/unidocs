@@ -15,15 +15,18 @@ export {
   AdminApiV1BasePath,
   AdministratorMemberAuditActions,
   DocumentTypeAuditActions,
+  TenantMemberAuditActions,
   adminApiContract,
 } from "./contract.js";
 export type {
   AdminApiContract,
   AdministratorMemberAuditAction,
   DocumentTypeAuditAction,
+  TenantMemberAuditAction,
 } from "./contract.js";
 export {
   AddAdministratorMemberRequestSchema,
+  AddTenantMemberRequestSchema,
   AppendDocumentContractRequestSchema,
   AdminAuditActionSchema,
   AdminAuditEventSchema,
@@ -55,6 +58,8 @@ export {
   ListDocumentTypesResponseSchema,
   ListOperatorsResponseSchema,
   ListDocumentContractsResponseSchema,
+  ListTenantMembersQuerySchema,
+  ListTenantMembersResponseSchema,
   ListTypeCardBundlesResponseSchema,
   ListViewBundlesResponseSchema,
   MutationHeadersSchema,
@@ -65,6 +70,8 @@ export {
   OperatorValidationSchema,
   PaginationQuerySchema,
   SValueSchemaSchema,
+  TenantMemberMutationResultSchema,
+  TenantMemberRecordSchema,
   TypeCardBundleManifestV1Schema,
   TypeCardBundleListItemSchema,
   TypeCardBundleMutationResultSchema,
@@ -82,6 +89,7 @@ export {
 } from "./schemas.js";
 export type {
   AddAdministratorMemberRequest,
+  AddTenantMemberRequest,
   AppendDocumentContractRequest,
   AdminAuditAction,
   AdminAuditEvent,
@@ -106,6 +114,7 @@ export type {
   ListDocumentTypesResponse,
   ListOperatorsResponse,
   ListDocumentContractsResponse,
+  ListTenantMembersResponse,
   ListTypeCardBundlesResponse,
   ListViewBundlesResponse,
   OperatorRecord,
@@ -113,6 +122,7 @@ export type {
   OperatorMutationResult,
   OperatorDescriptor,
   OperatorValidation,
+  TenantMemberRecord,
   TypeCardBundleManifestV1,
   TypeCardBundleListItem,
   TypeCardBundleMutationResult,
