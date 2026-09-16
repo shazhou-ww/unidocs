@@ -12,7 +12,7 @@ export { IMMUTABLE_BUNDLE_CACHE_CONTROL, storeTypeCardBundleObjects } from "./bu
 export type { BundleObjectStore, BundleObjectWrite, StoredTypeCardBundle } from "./bundles/type-card-store.js";
 export { storeViewBundleObjects } from "./bundles/view-store.js";
 export type { StoredViewBundle } from "./bundles/view-store.js";
-export { AdminAccessError, googleIdentityFromVerifiedClaims, normalizeAdministratorEmail, requireBootstrapIdentity, requireBoundAdministrator, requireRecentAuthentication } from "./auth/administrator.js";
+export { AdminAccessError, googleIdentityFromVerifiedClaims, normalizeAdministratorEmail, normalizeGoogleEmail, requireBootstrapIdentity, requireBoundAdministrator, requireRecentAuthentication } from "./auth/administrator.js";
 export type { AdminCaller, AdminContext, AdminIdentity, BoundAdministrator } from "./auth/administrator.js";
 export { ADMIN_MCP_CATALOG, ADMIN_MCP_SCOPES, requireAdminMcpToolAccess } from "./mcp/catalog.js";
 export type { AdminMcpPolicy, AdminMcpScope, AdminMcpToolName } from "./mcp/catalog.js";
@@ -31,6 +31,8 @@ export { AdminOperationError, createDocumentTypeService } from "./admin/document
 export type { DocumentTypeCreateCommand, DocumentTypeRepository, DocumentTypeUpdateCommand } from "./admin/document-types.js";
 export { AdministratorOperationError, createAdministratorService } from "./admin/administrators.js";
 export type { AdministratorAddCommand, AdministratorRemoveCommand, AdministratorRepository } from "./admin/administrators.js";
+export { createTenantMemberService, TenantMemberOperationError } from "./admin/tenant-members.js";
+export type { TenantMemberAddCommand, TenantMemberOperationCode, TenantMemberRemoveCommand, TenantMemberRepository, TenantMemberRevokeSessionsCommand } from "./admin/tenant-members.js";
 export { AuditOperationError, createAuditEventService } from "./admin/audit-events.js";
 export type { AuditEventRepository } from "./admin/audit-events.js";
 export { DocumentContractOperationError, createDocumentContractService } from "./admin/document-contracts.js";
