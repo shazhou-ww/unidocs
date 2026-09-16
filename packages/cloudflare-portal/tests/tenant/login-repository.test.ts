@@ -141,7 +141,7 @@ describe("D1TenantLoginRepository.completeLogin", () => {
     const racing = new D1TenantLoginRepository(interleaved(real.db, async () => {
       await other.completeLogin(identity(), "req-winner");
     }), () => NOW);
-    await expect(racing.completeLogin(identity(), "req-loser")).rejects.toBeDefined();
+    await expect(racing.completeLogin(identity(), "req-loser")).rejects.not.toBeInstanceOf(AdminAccessError);
     expect(await rows("SELECT COUNT(*) AS n FROM portal_tenant_members")).toEqual([{ n: 1 }]);
     expect(await rows("SELECT COUNT(*) AS n FROM portal_tenant_sessions")).toEqual([{ n: 1 }]);
     expect(await rows("SELECT request_id FROM portal_tenant_auth_audit WHERE action = 'session.created'")).toEqual([{ request_id: "req-winner" }]);
