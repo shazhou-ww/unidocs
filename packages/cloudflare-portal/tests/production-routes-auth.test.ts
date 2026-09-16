@@ -1,7 +1,9 @@
 /**
  * T2: every route wrangler.production.jsonc gives this worker, requested
- * anonymously with the PRODUCTION vars. Local vars would prove nothing about
- * production: MCP is off locally, so /mcp answers 404 there and 401 here.
+ * anonymously with the PRODUCTION vars - local vars would prove nothing about
+ * production. The four MCP/OAuth route patterns are the exception: in this
+ * Vitest environment they can only be asserted as a fail-closed 503, not the
+ * real gate (see the comment above their SAMPLES entries below for why).
  *
  * Each route pattern must have an entry in SAMPLES, so a route added to the
  * production config without deciding how it is authenticated fails here.
@@ -26,7 +28,7 @@ interface ProductionConfig {
 
 type Expectation =
   | { readonly kind: "gate" }
-  | { readonly kind: "status"; readonly status: readonly number[]; readonly location?: RegExp }
+  | { readonly kind: "status"; readonly status: readonly number[]; readonly location?: RegExp; readonly bodyIsGenericError?: boolean }
   | { readonly kind: "clientError" }
   | { readonly kind: "emptyNotFound" };
 
@@ -42,7 +44,7 @@ const get = (url: string, expectation: Expectation = GATE): Sample => ({ method:
 const post = (url: string, expectation: Expectation = GATE): Sample => ({ method: "POST", url, expect: expectation });
 const ok = (status = 200): Expectation => ({ kind: "status", status: [status] });
 /** See the comment above the ADMIN_MCP_PATHS routes in SAMPLES for why this exists. */
-const MCP_ENV_LIMITED: Expectation = { kind: "status", status: [503] };
+const MCP_ENV_LIMITED: Expectation = { kind: "status", status: [503], bodyIsGenericError: true };
 
 const firstAsset = (assets: Readonly<Record<string, string>>, prefix: string) => {
   const path = Object.keys(assets).find(key => key.startsWith(prefix));
@@ -81,9 +83,12 @@ const SAMPLES: Record<string, () => Sample[]> = {
   // scheme in: file, data, and node are supported by the default ESM loader.
   // Received protocol 'cloudflare:'"). The import throws before any binding or
   // credential is read, so worker.ts's catch-all turns it into a 503 with a
-  // generic body (`{"error":{"code":"internal_error",...,"requestId":...}}`,
-  // confirmed to carry no secret, header or stack trace) regardless of vars -
-  // the same reason tests/worker.test.ts's "MCP kill switch" test asserts 503,
+  // generic body (`{"error":{"code":"internal_error",...,"requestId":...}}`)
+  // regardless of vars. MCP_ENV_LIMITED's `bodyIsGenericError` makes that a
+  // standing assertion (parses as JSON, `error.code === "internal_error"`, no
+  // stack-trace-shaped content) rather than a one-time manual check, so a
+  // future change that turns this into a real leak fails here - the same
+  // reason tests/worker.test.ts's "MCP kill switch" test asserts 503,
   // not the real auth outcome, once MCP_ENABLED is "true". This is fail-closed,
   // not a leak, but it means this suite cannot confirm the status Google or an
   // MCP client would actually see for these four route patterns in production;
@@ -174,10 +179,18 @@ function judge(sample: Sample, response: Response, body: string): string | null 
       if ([401, 403].includes(response.status)) return null;
       if (response.status === 303 && location && SIGN_IN_PATHS.includes(new URL(location, SITE).pathname)) return null;
       return `expected 401/403 or a 303 to a sign-in page, got ${response.status} ${location ?? ""}`;
-    case "status":
+    case "status": {
       if (!sample.expect.status.includes(response.status)) return `expected ${sample.expect.status.join("/")}, got ${response.status}`;
       if (sample.expect.location && !sample.expect.location.test(location ?? "")) return `unexpected Location ${location}`;
+      if (sample.expect.bodyIsGenericError) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(body); } catch { return `expected a generic JSON error body, got unparseable: ${body.slice(0, 200)}`; }
+        const errorCode = (parsed as { error?: { code?: unknown } } | null)?.error?.code;
+        if (errorCode !== "internal_error") return `expected error.code "internal_error", got ${JSON.stringify(errorCode)}`;
+        if (/\.(ts|js|mjs|cjs):\d+:\d+/.test(body) || /\bat\s+[\w.$]+\s*\(/.test(body)) return `body looks like it carries a stack trace: ${body.slice(0, 200)}`;
+      }
       return null;
+    }
     case "clientError":
       return response.status >= 400 && response.status < 500 ? null : `expected a 4xx, got ${response.status}`;
     case "emptyNotFound":
