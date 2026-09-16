@@ -44,11 +44,19 @@ export class D1TenantLoginRepository {
   }
 
   /**
-   * Reads, then commits binding and session in one batch. Every write the
-   * batch depends on is followed by a guard row (`portal_mutation_guard`
-   * only accepts 1), so a member removed or an invitation claimed between the
-   * read and the batch fails the whole batch instead of leaving a session
-   * behind for someone who is no longer a member.
+   * Reads, then commits binding (or provisioning) and session in one batch.
+   * Every write the batch depends on is followed by a guard row
+   * (`portal_mutation_guard` only accepts 1), so a member removed or an
+   * invitation claimed between the read and the batch fails the whole batch
+   * instead of leaving a session behind for someone who is no longer a
+   * member.
+   *
+   * The tenant plane is self-service: any Google account with a verified
+   * email may sign in. An identity that is neither an existing member nor an
+   * invitation is provisioned its own, brand-new tenant right here — there is
+   * no "not on the list" rejection left. The one case that still throws
+   * `AdminAccessError("forbidden")` is an invitation claimed by a
+   * confirmation that predates it.
    */
   async completeLogin(identity: AdminIdentity, requestId: string) {
     const now = this.now();
@@ -61,9 +69,22 @@ export class D1TenantLoginRepository {
       .bind(verified.issuer, verified.subject).first<MemberRow>();
     const invited = bound ? null : await this.db.prepare("SELECT * FROM portal_tenant_members WHERE email = ? AND active = 1 AND subject IS NULL")
       .bind(verified.email).first<MemberRow>();
-    const member = bound ?? invited;
     // An identity confirmed before the invitation existed may not claim it.
-    if (!member || (invited && confirmedAt < invited.created_at)) throw new AdminAccessError("forbidden");
+    if (invited && confirmedAt < invited.created_at) throw new AdminAccessError("forbidden");
+
+    // Neither an existing member nor an invitation: provision a fresh tenant
+    // and member for this identity. A member removed by an administrator
+    // lands here too on their next sign-in — removal means "removed from
+    // that tenant", not "locked out" — and gets a new, empty tenant.
+    const provisioned = !bound && !invited;
+    const member: MemberRow = bound ?? invited ?? {
+      member_id: crypto.randomUUID(),
+      tenant_id: `t-${crypto.randomUUID()}`,
+      principal_id: `user:${crypto.randomUUID()}`,
+      email: verified.email,
+      revision: 0,
+      created_at: now,
+    };
 
     const issued = await this.sessions.prepareIssue(member.tenant_id, member.principal_id, now);
     const audit = (action: "member.bound" | "session.created") => this.db.prepare(
@@ -76,6 +97,22 @@ export class D1TenantLoginRepository {
         this.db.prepare(`UPDATE portal_tenant_members SET issuer = ?, subject = ?, revision = revision + 1, updated_at = ?
           WHERE member_id = ? AND email = ? AND active = 1 AND subject IS NULL AND revision = ? AND created_at <= ?`)
           .bind(verified.issuer, verified.subject, now, invited.member_id, verified.email, invited.revision, confirmedAt),
+        this.db.prepare("INSERT INTO portal_mutation_guard SELECT changes()"),
+        this.db.prepare("DELETE FROM portal_mutation_guard"),
+        audit("member.bound"),
+      );
+    } else if (provisioned) {
+      statements.push(
+        this.db.prepare(`INSERT INTO portal_tenant_members
+          (member_id, tenant_id, principal_id, email, issuer, subject, active, added_by, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 1, 'self-signup', ?, ?)`)
+          .bind(member.member_id, member.tenant_id, member.principal_id, member.email, verified.issuer, verified.subject, now, now),
+        // The partial unique indexes on active email and active (issuer,
+        // subject) are what actually decide a race between two signups for
+        // the same identity: the loser's INSERT above throws a plain D1
+        // error, aborting its whole batch before this guard even runs. This
+        // guard exists so a provisioning write is checked the same way every
+        // other write in this batch is.
         this.db.prepare("INSERT INTO portal_mutation_guard SELECT changes()"),
         this.db.prepare("DELETE FROM portal_mutation_guard"),
         audit("member.bound"),

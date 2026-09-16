@@ -5,8 +5,7 @@ import { TENANT_SESSION_COOKIE } from "../../src/tenant/session.js";
 
 const ORIGIN = "http://127.0.0.1:8795";
 const TOKEN = "agent-local-token-0123456789";
-const TENANT = "t-local";
-const options = { origin: ORIGIN, token: TOKEN, tenantId: TENANT };
+const options = { origin: ORIGIN, token: TOKEN };
 
 function request(authorization: string | null, init: { url?: string; method?: string; cookie?: string } = {}) {
   const headers = new Headers();
@@ -21,13 +20,25 @@ describe("authenticateAgent", () => {
     expect(AGENT_SCOPES).toEqual(["documents:read", "comments:read", "comments:reply", "versions:submit"]);
   });
 
-  it("resolves the configured token to a bearer context", async () => {
+  it("resolves the configured token to a bearer context for the tenant named in the path", async () => {
     await expect(authenticateAgent(request(`Bearer ${TOKEN}`), options)).resolves.toEqual({
-      tenantId: TENANT,
+      tenantId: "t-local",
       principalId: "agent:markdown-primary",
       transport: "bearer",
       scopes: ["documents:read", "comments:read", "comments:reply", "versions:submit"],
     });
+  });
+
+  it("authenticates for a tenant it was never configured with: the token alone authorizes, the path names the tenant", async () => {
+    await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url: `${ORIGIN}/api/v1/tenants/t-brand-new/documents` }), options))
+      .resolves.toMatchObject({ tenantId: "t-brand-new" });
+    await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url: `${ORIGIN}/api/v1/tenants/t-another/threads/th-1/comments` }), options))
+      .resolves.toMatchObject({ tenantId: "t-another" });
+  });
+
+  it("percent-decodes the tenant segment", async () => {
+    await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url: `${ORIGIN}/api/v1/tenants/t%2Dlocal/documents` }), options))
+      .resolves.toMatchObject({ tenantId: "t-local" });
   });
 
   it("needs neither Origin nor a CSRF token on a mutation", async () => {
@@ -51,13 +62,11 @@ describe("authenticateAgent", () => {
   });
 
   it.each([
-    ["an unset token", { token: undefined }],
-    ["an empty token", { token: "" }],
-    ["an unset tenant", { tenantId: undefined }],
-    ["an empty tenant", { tenantId: "" }],
-  ])("is unauthorized when the Agent credential has %s, even for the empty bearer it would match", async (_label, override) => {
-    const configured = { ...options, ...override };
-    await expect(authenticateAgent(request(`Bearer ${configured.token || TOKEN}`), configured)).rejects.toMatchObject({ code: "unauthorized" });
+    ["an unset token", undefined],
+    ["an empty token", ""],
+  ])("is unauthorized when the Agent credential has %s, even for the empty bearer it would match", async (_label, token) => {
+    const configured = { ...options, token };
+    await expect(authenticateAgent(request(`Bearer ${token || TOKEN}`), configured)).rejects.toMatchObject({ code: "unauthorized" });
     await expect(authenticateAgent(request("Bearer "), configured)).rejects.toMatchObject({ code: "unauthorized" });
   });
 
@@ -82,5 +91,28 @@ describe("authenticateAgent", () => {
     const rejected = authenticateAgent(request(`Bearer ${TOKEN}x`, { cookie }), options);
     await expect(rejected).rejects.toBeInstanceOf(TenantAccessError);
     await expect(rejected).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("is unauthorized when the path carries no tenant segment at all: a valid bearer at the session endpoints", async () => {
+    await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url: `${ORIGIN}/portal/auth/session` }), options))
+      .rejects.toMatchObject({ code: "unauthorized" });
+    await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url: `${ORIGIN}/portal/auth/logout` }), options))
+      .rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it.each([
+    ["an empty segment", `${ORIGIN}/api/v1/tenants//documents`],
+    ["a segment over 128 characters", `${ORIGIN}/api/v1/tenants/${"t".repeat(129)}/documents`],
+    ["a segment with a raw space", `${ORIGIN}/api/v1/tenants/t%20local/documents`],
+    ["a segment that decodes to a control character", `${ORIGIN}/api/v1/tenants/t%09local/documents`],
+    ["a segment that is just the tenants collection itself", `${ORIGIN}/api/v1/tenants/`],
+    ["a segment that is unrelated to the tenants path", `${ORIGIN}/api/v1/other/t-local/documents`],
+  ])("is unauthorized for %s: a valid bearer against a malformed or missing tenant segment", async (_label, url) => {
+    await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url }), options)).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("is unauthorized for a malformed percent-encoding in the tenant segment", async () => {
+    await expect(authenticateAgent(request(`Bearer ${TOKEN}`, { url: `${ORIGIN}/api/v1/tenants/t-%zzlocal/documents` }), options))
+      .rejects.toMatchObject({ code: "unauthorized" });
   });
 });

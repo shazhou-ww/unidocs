@@ -451,9 +451,6 @@ export function resolveOperatorSecrets({ processEnv = {}, devVars = {}, random =
   };
 }
 
-/** The tenant the local portal issues sessions for, and so the Agent's. */
-const LOCAL_AGENT_TENANT_ID = "t-local";
-
 /**
  * Start the gateway plus the selected document type workers in one Miniflare
  * runtime. The Gateway receives a static registry containing only the selected
@@ -591,7 +588,6 @@ export async function startLocalRuntime({
         ? {
             MARKDOWN_OPERATOR_HMAC_KEY: operatorSecrets[component.name].operatorHmacKey,
             AGENT_API_TOKEN: operatorSecrets[component.name].agentToken,
-            AGENT_TENANT_ID: LOCAL_AGENT_TENANT_ID,
           }
         : {}),
     };

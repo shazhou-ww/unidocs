@@ -139,9 +139,10 @@ async function serveTenant(request: Request, env: Env, path: string, context?: E
       response = login;
     } else {
       const store = new D1TenantSessionStore(env.DB);
-      // Plain string vars: reading them cannot throw, and an unset one simply
-      // refuses every bearer inside authenticateAgent.
-      const agent = { agentToken: env.AGENT_API_TOKEN, agentTenantId: env.AGENT_TENANT_ID };
+      // A plain string var: reading it cannot throw, and an unset one simply
+      // refuses every bearer inside authenticateAgent. The tenant a bearer
+      // acts for now comes from the request path, not from configuration.
+      const agent = { agentToken: env.AGENT_API_TOKEN };
       const session = await createTenantSessionHttp({
         origin: env.PORTAL_ORIGIN, store, now, ...agent,
         // Unset in production config: `undefined === "true"` keeps it off.

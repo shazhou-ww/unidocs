@@ -8,7 +8,7 @@ const LOCAL = "http://127.0.0.1:8795";
 const PRODUCTION = "https://unidocs.shazhou.work";
 const NOW = 1_757_808_000;
 const AGENT_TOKEN = "agent-local-token-0123456789";
-const agent = { agentToken: AGENT_TOKEN, agentTenantId: "t-local" };
+const agent = { agentToken: AGENT_TOKEN };
 
 let real: RealD1;
 let store: D1TenantSessionStore;

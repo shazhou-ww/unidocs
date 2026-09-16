@@ -389,13 +389,21 @@ pnpm dev unidocs-cloudflare --docker
 
 ### Tenant console sign-in (`pnpm dev portal`)
 
-The tenant console at `/portal/` needs a tenant session. Locally there are two
-ways to get one:
+The tenant console at `/portal/` needs a tenant session. The tenant plane is
+self-service: any Google account can sign in through `/portal/auth/login`, and
+a first-time identity is provisioned its own, brand-new tenant on the spot —
+`PORTAL_BOOTSTRAP_EMAIL` is **not** required to sign in to the tenant console;
+it only designates the first administrator (see below). Locally there are two
+ways to get a tenant session:
 
-- **Real Google sign-in (default).** Set `PORTAL_BOOTSTRAP_EMAIL` and the Google
-  client in `packages/cloudflare-portal/.dev.vars`. On every boot the seed adds
-  that email as a member of tenant `t-local`, so it can sign in through
-  `/portal/auth/login`. The Google client must list the loopback callback
+- **Real Google sign-in (default).** Set the Google client in
+  `packages/cloudflare-portal/.dev.vars`. Any Google account can now sign in
+  through `/portal/auth/login` and lands in its own tenant. If
+  `PORTAL_BOOTSTRAP_EMAIL` is also set, the seed additionally adds that
+  address as a member of tenant `t-local` on every boot, purely for
+  convenience: it gives that one address a stable, known tenant id (`t-local`)
+  across restarts instead of a fresh one each time the local database is
+  reset. The Google client must list the loopback callback
   `http://127.0.0.1:<portal port>/portal/auth/callback`.
 - **Dev session switch.** Set `PORTAL_TENANT_DEV_SESSION=true` in the same file.
   Any visit without a session cookie is handed a `t-local` / `user-local`
@@ -403,8 +411,15 @@ ways to get one:
   stick while it is on.
 
 Documents written under the dev session belong to `user-local`; signing in with
-Google gives a different principal in the same tenant, which still sees every
-document.
+Google provisions or resumes a different principal, in its own tenant (or in
+`t-local` when it was pre-seeded as above), which sees every document in that
+tenant.
+
+An administrator can still invite a specific email into an existing tenant
+through `POST /admin/api/v1/tenant-members` — that account then joins the
+invited tenant on its next sign-in instead of getting a new one. This is
+useful for putting several people into one shared tenant; it is no longer
+required for anyone to be able to sign in at all.
 
 ### Tenant console go-live in production
 
@@ -416,10 +431,9 @@ is invited:
 1. In Google Cloud Console, add
    `https://unidocs.shazhou.work/portal/auth/callback` as an authorized
    redirect URI for `GATEWAY_OIDC_CLIENT_ID`. Without it every callback fails.
-2. Configure the first tenant's UniCAS values and set the portal secrets:
-   `AGENT_TENANT_ID` and `CAS_ORIGIN`/`CAS_STACK_ID`/`CAS_ISSUER`/
-   `CAS_AUDIENCE`/`CAS_REF_DOMAIN`/`CAS_SIGNING_KID` as `vars`, then
-   `wrangler secret put AGENT_API_TOKEN` and
+2. Configure the tenant's UniCAS values and set the portal secrets:
+   `CAS_ORIGIN`/`CAS_STACK_ID`/`CAS_ISSUER`/`CAS_AUDIENCE`/`CAS_REF_DOMAIN`/
+   `CAS_SIGNING_KID` as `vars`, then `wrangler secret put AGENT_API_TOKEN` and
    `wrangler secret put CAS_SIGNING_KEY` on the portal worker.
 3. Give the production markdown worker its side of the Operator loop:
    `PLATFORM_SERVICE` service binding to `unidocs-portal`, `PLATFORM_ORIGIN`,
@@ -433,17 +447,20 @@ is invited:
 
 5. Deploy the markdown worker first, then the portal worker, so the Operator
    loop is ready before the new routes go live.
-6. Invite the first tenant member through the admin API
-   (`POST /admin/api/v1/tenant-members`).
-7. Have that member sign in at `/portal/auth/login`, create a document, and
-   confirm the Operator produces its first version.
+6. Have anyone with a Google account sign in at `/portal/auth/login` — the
+   tenant plane is self-service, so this alone provisions them a tenant. To
+   put someone into an existing tenant instead, invite them first through the
+   admin API (`POST /admin/api/v1/tenant-members`).
+7. Create a document as that member and confirm the Operator produces its
+   first version.
 8. Spot-check that `/ui/*` and `/tenants/*` still reach the gateway worker —
    the new routes are more specific and should not have taken anything from
    its catch-all, but this is the moment to confirm it.
 
-Only one tenant can go live per deploy: `AGENT_TENANT_ID` is a single value,
-so the Operator works for one tenant at a time until the Agent credential
-design is revisited.
+Every tenant can go live in the same deploy: the Agent bearer authenticates
+for whichever tenant its request path names, not a single preconfigured one.
+That is a deliberate trade-off — see "Agent credential: shared token, widened
+scope" in the design spec — not a narrowing of who the token can act for.
 
 ## Local UniCAS configuration
 

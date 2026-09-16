@@ -54,17 +54,43 @@ describe("D1TenantLoginRepository.completeLogin", () => {
     ]);
   });
 
-  it("finds an already bound member by Google identity, not by email", async () => {
+  it("finds an already bound member by Google identity, not by email, and provisions no new tenant", async () => {
     await invite();
-    await repository.completeLogin(identity(), "req-1");
+    const first = await repository.completeLogin(identity(), "req-1");
     const again = await repository.completeLogin(identity("google-subject", "renamed@example.com"), "req-2");
     expect(again.memberId).toBe("member-invited");
+    expect(again.tenantId).toBe(first.tenantId);
+    expect(again.tenantId).toBe("t1");
     expect(await rows("SELECT action FROM portal_tenant_auth_audit WHERE request_id = 'req-2'")).toEqual([{ action: "session.created" }]);
+    expect(await rows("SELECT COUNT(*) AS n FROM portal_tenant_members")).toEqual([{ n: 1 }]);
   });
 
-  it("denies an identity with no membership", async () => {
-    await expect(repository.completeLogin(identity(), "req-1")).rejects.toEqual(new AdminAccessError("forbidden"));
-    expect(await rows("SELECT * FROM portal_tenant_sessions")).toEqual([]);
+  it("provisions a brand-new identity its own tenant, member row, audit rows and a working session", async () => {
+    const result = await repository.completeLogin(identity(), "req-1");
+    expect(result.tenantId).toMatch(/^t-/);
+    expect(await rows(`SELECT tenant_id, principal_id, email, issuer, subject, active, added_by FROM portal_tenant_members
+      WHERE member_id = '${result.memberId}'`)).toEqual([{
+      tenant_id: result.tenantId, principal_id: result.principalId, email: "member@example.com",
+      issuer: "https://accounts.google.com", subject: "google-subject", active: 1, added_by: "self-signup",
+    }]);
+    const session = await new D1TenantSessionStore(real.db).find(await hashSessionSecret(result.token), NOW);
+    expect(session).toMatchObject({ tenantId: result.tenantId, principalId: result.principalId });
+    expect(await rows("SELECT action, request_id FROM portal_tenant_auth_audit ORDER BY action")).toEqual([
+      { action: "member.bound", request_id: "req-1" },
+      { action: "session.created", request_id: "req-1" },
+    ]);
+  });
+
+  it("provisions two different identities into two different tenants, each seeing only their own", async () => {
+    const first = await repository.completeLogin(identity("subject-a", "a@example.com"), "req-a");
+    const second = await repository.completeLogin(identity("subject-b", "b@example.com"), "req-b");
+    expect(first.tenantId).not.toBe(second.tenantId);
+    const store = new D1TenantSessionStore(real.db);
+    const sessionA = await store.find(await hashSessionSecret(first.token), NOW);
+    const sessionB = await store.find(await hashSessionSecret(second.token), NOW);
+    expect(sessionA?.tenantId).toBe(first.tenantId);
+    expect(sessionB?.tenantId).toBe(second.tenantId);
+    expect(sessionA?.tenantId).not.toBe(sessionB?.tenantId);
   });
 
   it("denies a confirmation older than the invitation", async () => {
@@ -73,10 +99,20 @@ describe("D1TenantLoginRepository.completeLogin", () => {
     await expect(late.completeLogin(identity(), "req-1")).rejects.toEqual(new AdminAccessError("forbidden"));
   });
 
-  it("denies a removed member", async () => {
+  it("provisions a removed member a fresh, empty tenant distinct from their old one, leaving the old tenant's documents alone", async () => {
     await invite();
-    await real.db.prepare("UPDATE portal_tenant_members SET active = 0").run();
-    await expect(repository.completeLogin(identity(), "req-1")).rejects.toEqual(new AdminAccessError("forbidden"));
+    const first = await repository.completeLogin(identity(), "req-1");
+    await real.db.prepare(
+      "INSERT INTO portal_documents (tenant_id, document_id, name, document_type, created_at) VALUES (?, 'doc-1', 'Doc', 'markdown', ?)",
+    ).bind(first.tenantId, NOW).run();
+    // An administrator removes the member from that tenant. Removal means
+    // "removed from that tenant", not "locked out": the same identity signing
+    // in again is provisioned a brand-new, empty tenant.
+    await real.db.prepare("UPDATE portal_tenant_members SET active = 0 WHERE member_id = ?").bind(first.memberId).run();
+    const second = await repository.completeLogin(identity(), "req-2");
+    expect(second.tenantId).not.toBe(first.tenantId);
+    expect(await rows(`SELECT tenant_id FROM portal_documents WHERE document_id = 'doc-1'`)).toEqual([{ tenant_id: first.tenantId }]);
+    expect(await rows(`SELECT tenant_id FROM portal_documents WHERE tenant_id = '${second.tenantId}'`)).toEqual([]);
   });
 
   it("writes nothing when the member is removed between the read and the batch", async () => {
@@ -98,6 +134,17 @@ describe("D1TenantLoginRepository.completeLogin", () => {
     }), () => NOW);
     await expect(racing.completeLogin(identity(), "req-loser")).rejects.toBeDefined();
     expect(await rows("SELECT request_id FROM portal_tenant_auth_audit WHERE action = 'session.created'")).toEqual([{ request_id: "req-winner" }]);
+  });
+
+  it("lets only one of two racing signups for the same brand-new identity provision a tenant; the loser writes nothing", async () => {
+    const other = new D1TenantLoginRepository(real.db, () => NOW);
+    const racing = new D1TenantLoginRepository(interleaved(real.db, async () => {
+      await other.completeLogin(identity(), "req-winner");
+    }), () => NOW);
+    await expect(racing.completeLogin(identity(), "req-loser")).rejects.toBeDefined();
+    expect(await rows("SELECT COUNT(*) AS n FROM portal_tenant_members")).toEqual([{ n: 1 }]);
+    expect(await rows("SELECT request_id FROM portal_tenant_auth_audit WHERE action = 'session.created'")).toEqual([{ request_id: "req-winner" }]);
+    expect(await rows("SELECT request_id FROM portal_tenant_auth_audit WHERE action = 'member.bound'")).toEqual([{ request_id: "req-winner" }]);
   });
 
   it("keeps at most ten sessions per member, dropping the oldest and every expired one", async () => {

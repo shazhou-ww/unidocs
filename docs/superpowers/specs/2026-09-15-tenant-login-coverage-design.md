@@ -6,6 +6,13 @@
 本文替换 2026-09-14 的 `tenant-login-design.md` 及其计划。那一版写于 #67
 合入之前，其前提（租户 API 未接入 worker、会话认证不存在）已不成立。
 
+> **2026-09-16 修订。** 产品方决定反转本文的两处定案：租户面从「邀请制」改为
+> 「自助开户」（任何 Google 账号均可登录，首次登录即开出一个新租户），
+> Agent 承载者的租户改为从请求路径读取，`AGENT_TENANT_ID` 已从代码中整体移除
+> （不再固定于单一租户）。受影响的段落在原处保留并标注修订，完整说明见新增
+> 的 §9。历史决定本身不被删除——它们是当时的事实与理由，只是不再是现状；本文
+> 其余部分提到 `AGENT_TENANT_ID` 之处，按「历史约束，现已解除」阅读。
+
 ---
 
 ## 1. 现状（main @ 9923dbe）
@@ -98,7 +105,12 @@
 
 **非目标**
 
-- Agent 凭据改造（仍为共享 token；本轮只在生产配置它，见 §6）。
+- ~~Agent 凭据改造（仍为共享 token；本轮只在生产配置它，见 §6）。~~
+  **2026-09-16 修订：不再是非目标。** 自助开户使「唯一一个
+  `AGENT_TENANT_ID`」的前提不再成立——新开的租户事先并不存在于任何配置里。
+  本轮把 Agent 承载者的租户改为从请求路径读取，`AGENT_TENANT_ID`
+  整体删除；token 本身仍是共享密钥，未做成按租户短期签发。取舍与后续窄化
+  路径见新增的 §9。
 - gateway 主站（`/ui/*`、`/tenants/*`）的登录体系。
 - 成员管理的后台页面。
 - 文档级 ACL；租户内全可见保持不变。
@@ -282,7 +294,13 @@ callback 请求来自 accounts.google.com 的顶层跳转，天然带
 3. 按活跃的 `(issuer, subject)` 找成员；找到即为已绑定成员。
 4. 否则按活跃且未绑定的 `email` 找邀请行；要求确认时间不早于邀请的
    `created_at`（沿用 admin 的防护：阻止邀请之前签发的身份去认领邀请）。
-5. 两者都没有 → 拒绝（见下）。**没有自助开户。**
+5. ~~两者都没有 → 拒绝（见下）。**没有自助开户。**~~
+   **2026-09-16 修订：两者都没有 → 自助开户，而不是拒绝。** 为这个身份现场
+   创建一个新租户与一个新成员（`tenant_id = t-${randomUUID()}`、
+   `member_id = randomUUID()`、`principal_id = user:${randomUUID()}`、
+   `added_by = 'self-signup'`），随后按下面第 6 步同样的方式绑定并签发会话。
+   `AdminAccessError("forbidden")` 只保留给「邀请早于确认时间」这一种情况
+   （原第 4 步）。细节与理由见新增的 §9。
 
 写入阶段（一个 D1 batch，**每一步都以 `portal_mutation_guard` 断言**，
 0 行更新使整个 batch 失败，参照 `auth-repository.ts` 的 `completeLogin`）：
@@ -291,6 +309,12 @@ callback 请求来自 accounts.google.com 的顶层跳转，天然带
    `UPDATE … SET issuer, subject, revision = revision + 1, updated_at
    WHERE member_id = ? AND email = ? AND active = 1 AND subject IS NULL
    AND revision = ? AND created_at <= ?`，随后 guard；审计 `member.bound`。
+   **2026-09-16 修订：** 若两者都没有（自助开户），改为
+   `INSERT INTO portal_tenant_members (…, active, added_by, …) VALUES (…, 1,
+   'self-signup', …)`，随后同样 guard、同样审计 `member.bound`。两个活跃唯一
+   索引（4.1）是这里真正的并发裁判：两个人同时对同一身份自助开户，后写入的
+   那个 `INSERT` 直接因唯一索引冲突而报错，使其整个 batch 失败——guard 只是
+   让这一步与其余每一步的写法保持一致，不是这条路径唯一的防线。
 7. 断言成员此刻仍活跃且身份一致：
    `INSERT INTO portal_mutation_guard SELECT CASE WHEN EXISTS
    (SELECT 1 FROM portal_tenant_members WHERE member_id = ? AND issuer = ?
@@ -410,6 +434,14 @@ ON CONFLICT (member_id) DO UPDATE SET active = 1, updated_at = excluded.updated_
 
 **重新加入同一个 email**：`remove` 之后再 `add` 会生成新的 `member_id` 与
 **新的 `principal_id`**（§8 Q2 定案）。旧成员行保留为停用状态。
+
+**2026-09-16 修订：** 上面说的是「管理员主动重新 `add`」这一条路径，`add`
+把这个 email 加回**同一个**（或另一个管理员指定的）租户。它不是这个 email
+唯一的复活方式：自助开户上线后，被 `remove` 的成员完全可以不经过任何
+`add`，直接用同一个 Google 身份重新走 `/portal/auth/login`——那样得到的不是
+「同租户下的新 principal」，而是**一个全新的、空的租户**（§4.3 第 5 步）。
+`remove` 因此不再是「封禁这个人」，而是「把这个人移出这一个租户」；新增的
+§9 记录了这一变化。
 
 **seed**：`stacks/unidocs-cloudflare/local/portal-seed.mjs` 在注册 markdown 类型
 之后，用它已有的管理员会话（`adminClient`）调用该 API，把
@@ -650,12 +682,18 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
 | 登录 begin 是匿名写 D1 的端点，可被刷 | 事务表以「10 分钟内的 begin 数」为上限（4.3 清理）；admin 的 `/admin/auth/login` 同样如此。需要时在 Cloudflare 上对两个 begin 路径加限流规则，不在本轮代码范围 |
 | 会话 cookie 被盗 | 固定 8 小时有效期；管理员可 `revokeSessions`；每成员至多 10 条会话 |
 | 将来开放直连 UniCAS capability 后，停用成员的 JWT 在有效期内仍可用 | v0 不签发（固定 503）；开放签发的设计须声明该窗口 |
-| 本轮生产只支持一个租户 | 由单一 `AGENT_TENANT_ID` 决定，已写入 §4.7；多租户与 Agent 凭据改造一并做 |
+| ~~本轮生产只支持一个租户~~（2026-09-16 起不再成立，见 §9） | ~~由单一 `AGENT_TENANT_ID` 决定，已写入 §4.7；多租户与 Agent 凭据改造一并做~~ |
 
 ## 8. 开放问题的定案
 
 - **Q1 一人一租户：接受。** 两条全局唯一索引简化了登录。以后支持多租户时，
   把这两条索引改为按 `tenant_id` 分区，并在登录后加租户选择。
+
+  **2026-09-16 修订：** 自助开户没有改变这条定案，只是给它添了一种新的达成
+  方式——「一人一租户」现在既可能来自一次邀请绑定，也可能来自登录当场
+  开出的一个新租户（§4.3 第 5 步）。两条全局唯一索引仍是唯一的裁判：不管
+  member 行是 `UPDATE`（邀请）出来的还是 `INSERT`（自助开户）出来的，同一个
+  活跃 email 或同一个活跃 `(issuer, subject)` 都不可能同时属于两行、两个租户。
 
 - **Q2 重新加入后换 principal：接受「换新」（方案 A）。**
   - 考虑过的方案 B「`add` 时按 email 复活停用行」被否决：
@@ -667,6 +705,15 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
     成员行永不删除（4.1，已做）；届时把 `portal_tenant_member_principal` 改为
     `WHERE active = 1` 的部分唯一索引。
   - 眼下影响有限：WebUI 不显示作者，影响只在 `author_id` 的数据归属。
+
+  **2026-09-16 修订：** 以上讨论的「换新」只覆盖「管理员重新 `add`」这一条
+  路径。自助开户开出了第二条、影响更大的路径：一个被 `remove` 的成员**不需要
+  任何人重新 `add`**，自己用同一个 Google 身份重新登录即可——那时换的不只是
+  principal，连**租户**都是全新、空的（旧租户的文档、评论都留在旧
+  `tenant_id` 下，新租户看不见）。`remove` 的含义因此从「封禁这个人」变成
+  「把这个人移出这一个租户」；管理员如果想真正阻止某人访问任何租户，需要在
+  其自助登录前就有相应手段——本轮没有设计这类「全局封禁」，是已知的空白，见
+  §9。
 
 - **Q3 多会话：允许，但加三项约束。**
   1. 每成员至多 10 条会话，登录时淘汰最旧的并清理过期的（4.3）；
@@ -688,3 +735,91 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
   4. 跳转登录的 `Location` 精确到 pathname；
   5. 匿名请求不带 `Origin`，避开 admin 退出接口的 204 特例；
   6. 每个通配 route 另测一个随机未知路径，必须 404 无体。
+
+## 9. 2026-09-16 修订：自助开户，与 Agent 凭据的作用域扩大
+
+产品方决定反转本文两处原定案。以下记录改了什么、为什么、以及新的后果——
+不是重写 §1～§8 的历史，那些仍是 2026-09-15 上线时的事实与理由。
+
+### 9.1 从「邀请制」到「自助开户」
+
+**改了什么。** `D1TenantLoginRepository.completeLogin`（4.3 第 5 步）不再在
+「既非已绑定成员、也非邀请」时拒绝登录。任何通过 Google 身份校验（`email_verified`、
+5 分钟内确认）的账号，第一次登录时都会现场获得一个全新、独立的租户：
+
+```
+tenant_id    = t-${randomUUID()}
+member_id    = randomUUID()
+principal_id = user:${randomUUID()}
+email        = 规范化后的登录 email
+issuer/subject = 本次登录绑定的 Google 身份
+active       = 1
+added_by     = 'self-signup'
+```
+
+写法与「绑定邀请」完全对称：一条 `INSERT`，紧跟
+`INSERT INTO portal_mutation_guard SELECT changes()` 与清空，审计
+`member.bound`，其余步骤（8/9：会话上限、`session.created`）不变。
+`AdminAccessError("forbidden")`（`login=denied`）只保留给一种情况：邀请的
+确认时间早于邀请本身的 `created_at`。
+
+**为什么。** 产品方认定租户面应当像大多数 SaaS 一样开箱可用，而不是每个人
+都要先等管理员邀请。「一人一租户」（§8 Q1）没有变：判定「是否已有归属」的
+两条全局唯一索引（活跃 email、活跃 `(issuer, subject)`）原样保留，自助开户
+只是在两条索引都查无结果时，多出的第三个分支，而不是绕开它们。
+
+**并发。** 两个人（或同一个人开两个标签页）同时用同一身份第一次登录，
+不再依赖一次 `revision` 比对：两次 `INSERT` 会撞上同一条活跃唯一索引，后
+提交的那次直接收到 D1 层的约束错误，使它那一整个 batch 失败——它不是
+`AdminAccessError`，`login-http.ts` 按「其他异常」处理，落到 `login=failed`，
+这是预期行为，不是 bug。
+
+**移除的新含义。** 因为自助开户不查「历史上是否曾经是成员」，一个被管理员
+`remove` 的成员，只要还记得自己的 Google 账号，隔一秒重新登录就能拿到
+**一个全新的、空的租户**——旧租户和它的文档原地不动，新租户与旧租户之间
+没有任何关联。也就是说：
+
+> **`remove` 现在的含义是「把这个人移出这一个租户」，不是「禁止这个人使用
+> 租户面」。**
+
+这与 §8 Q2 原先讨论的「重新加入换 principal」是两件不同的事：Q2 说的是
+管理员主动 `add` 回同一个（或另一个）租户时换新 principal；这里说的是完全
+不经过 `add`，自助登录本身就会开一个新租户。本轮没有设计「全局封禁」这一
+能力（例如按 email 或 `(issuer, subject)` 拉黑，阻止其触发自助开户）；这是
+已知的空白，留给以后有实际需要时再设计，不是遗漏。
+
+### 9.2 Agent 凭据：共享 token，作用域从一个租户扩大到全部
+
+**改了什么。** `authenticateAgent`（`tenant/agent-auth.ts`）不再从配置
+（`AGENT_TENANT_ID`）读取它认证的租户，而是解析请求路径
+`/api/v1/tenants/{tenantId}/...` 里的 `{tenantId}` 段——百分号解码后按
+`/^[\x21-\x7e]{1,128}$/` 校验，与租户面其余地方校验标识符的方式一致。
+`AGENT_TENANT_ID` 已从 `authenticateAgent`、`authenticateTenant`、
+`worker.ts`、`packages/cloudflare-portal/wrangler.jsonc` 的 `vars`、以及
+`stacks/unidocs-cloudflare/local/runtime.mjs` 里删除。路径不含合法租户段的
+请求（例如带 `Authorization` 头的 `/portal/auth/session`）得到
+`TenantAccessError("unauthorized")`，与改造前的行为一致。
+
+**为什么。** 自助开户让「本轮生产只开一个租户」（原 §4.7、§7 的前提）不再
+成立：新用户随时可能开出一个 `AGENT_TENANT_ID` 从未听说过的新租户，
+Markdown Operator 却仍要能替它写入版本——`platform-client.ts` 已经按路径
+寻址租户，缺的只是 portal 这一侧不再把 bearer 钉死在一个租户上。
+
+**接受的取舍。** Token 本身没变：仍是一份共享密钥，`authenticateAgent`
+只验证「这个 token 是不是配置的那一个」，不再验证「这个 token 能不能代表
+这个租户」——因为它现在对所有租户都有效。后果是：
+
+> **这份共享 token 一旦泄露，暴露的不再是一个租户的文档读写权限，而是
+> 全部租户的。**
+
+产品方接受这个后果，是有意的取舍，不是遗漏。**收窄的路径**：把「Operator
+出示一份长期有效的共享密钥」换成「Operator 出示一份按租户签发、短期有效的
+凭据」（例如 UniCAS 已有的按 stack 签发短期 JWT 的模式），使一份凭据泄露
+只影响它对应的那一个租户，代价是要给 Operator 增加取得/续期该凭据的流程。
+这不在本轮范围内。
+
+**对 §7 风险表与 §4.7 的影响。** 「本轮生产只支持一个租户」这条风险随
+`AGENT_TENANT_ID` 一并作废；生产配置不再需要为「开几个租户」预先决定
+Agent 凭据的形状——所有租户的 Agent 流量走同一份共享 token，见上一段的
+取舍。`docs/deployment-and-local-configuration.md`「Tenant console go-live in
+production」一节已同步移除 `AGENT_TENANT_ID` 这一步。

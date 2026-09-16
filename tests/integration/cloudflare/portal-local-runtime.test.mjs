@@ -234,7 +234,6 @@ describe("the markdown Operator beside the portal", () => {
     const bindings = await runtime.mf.getBindings("unidocs-portal");
     expect(bindings.MARKDOWN_OPERATOR_HMAC_KEY).toMatch(/^[0-9a-f]{64}$/);
     expect(bindings.AGENT_API_TOKEN).toMatch(/\S/);
-    expect(bindings.AGENT_TENANT_ID).toBe("t-local");
     expect(runtime.secrets).toEqual({
       agentToken: bindings.AGENT_API_TOKEN,
       operatorHmacKey: bindings.MARKDOWN_OPERATOR_HMAC_KEY,

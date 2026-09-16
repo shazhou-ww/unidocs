@@ -34,7 +34,6 @@ test("Worker fails closed before touching D1 when Google credentials are absent"
       get CAS_SIGNING_KID(): never { throw new Error("CAS must not be touched"); },
       get CAS_SIGNING_KEY(): never { throw new Error("CAS must not be touched"); },
       get AGENT_API_TOKEN(): never { throw new Error("Agent credential must not be touched"); },
-      get AGENT_TENANT_ID(): never { throw new Error("Agent credential must not be touched"); },
       get PORTAL_TENANT_DEV_SESSION(): never { throw new Error("Dev session switch must not be touched"); },
     };
     const response = await worker.fetch(new Request("https://unidocs.shazhou.work/admin/auth/login?code=never-log-this"), env);
@@ -76,7 +75,6 @@ test.each(ADMIN_MCP_PATHS)("Worker MCP kill switch runs before Google credential
     get CAS_SIGNING_KID(): never { throw new Error("Unexpected CAS access"); },
     get CAS_SIGNING_KEY(): never { throw new Error("Unexpected CAS access"); },
     get AGENT_API_TOKEN(): never { throw new Error("Unexpected Agent credential access"); },
-    get AGENT_TENANT_ID(): never { throw new Error("Unexpected Agent credential access"); },
     get PORTAL_TENANT_DEV_SESSION(): never { throw new Error("Unexpected dev session switch access"); },
   };
   const response = await worker.fetch(new Request("https://unidocs.shazhou.work" + path), env);
@@ -237,10 +235,9 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
     expect(snapshot.headers.get("X-Request-ID")).toMatch(/\S/);
   });
 
-  it("authenticates the Agent bearer from AGENT_API_TOKEN and AGENT_TENANT_ID", async () => {
+  it("authenticates the Agent bearer from AGENT_API_TOKEN, for whatever tenant the path names", async () => {
     const env = Object.defineProperties(tenantEnv(real.db), {
       AGENT_API_TOKEN: { value: "agent-local-token-0123456789" },
-      AGENT_TENANT_ID: { value: "t-local" },
     });
     const authorization = "Bearer agent-local-token-0123456789";
     const list = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, { headers: { authorization } }), env);
@@ -256,8 +253,25 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
     const wrong = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, { headers: { authorization: `${authorization}x` } }), env);
     expect(wrong.status).toBe(401);
 
+    // No AGENT_TENANT_ID is configured at all: the same token authenticates
+    // for a tenant nobody ever bound it to, because the tenant comes from
+    // the path.
+    const otherTenant = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-never-configured/documents`, { headers: { authorization } }), env);
+    expect(otherTenant.status).toBe(200);
+    await expect(otherTenant.json()).resolves.toEqual({ items: [], nextCursor: null });
+
+    // The session endpoint's path carries no tenant segment: the same valid
+    // bearer is unauthorized there, preserving today's behaviour.
     const session = await worker.fetch(new Request(`${ORIGIN}/portal/auth/session`, { headers: { authorization } }), env);
     expect(session.status).toBe(401);
+  });
+
+  it("refuses any bearer entirely when AGENT_API_TOKEN is unset, whatever tenant the path names", async () => {
+    const env = tenantEnv(real.db); // baseEnvWithoutOperatorConfig sets no AGENT_API_TOKEN
+    const response = await worker.fetch(new Request(`${ORIGIN}/api/v1/tenants/t-local/documents`, {
+      headers: { authorization: "Bearer whatever-token" },
+    }), env);
+    expect(response.status).toBe(401);
   });
 
   // The submissions route needs CAS only to verify a snapshot. With no CAS
@@ -289,7 +303,6 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
 
     const env = Object.defineProperties(tenantEnv(db), {
       AGENT_API_TOKEN: { value: "agent-local-token-0123456789" },
-      AGENT_TENANT_ID: { value: "t-local" },
     });
     const url = `${ORIGIN}/api/v1/tenants/t-local/documents/doc-1/submissions`;
     const headers = { authorization: "Bearer agent-local-token-0123456789", "content-type": "application/json" };

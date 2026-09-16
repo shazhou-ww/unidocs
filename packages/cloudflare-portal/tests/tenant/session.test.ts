@@ -136,7 +136,7 @@ describe("D1TenantSessionStore", () => {
 
 describe("authenticateTenant", () => {
   const auth = (req: Request) => authenticateTenant(req, { origin: ORIGIN, now: NOW, store });
-  const agentAuth = (req: Request) => authenticateTenant(req, { origin: ORIGIN, now: NOW, store, agentToken: AGENT_TOKEN, agentTenantId: "t-agent" });
+  const agentAuth = (req: Request) => authenticateTenant(req, { origin: ORIGIN, now: NOW, store, agentToken: AGENT_TOKEN });
 
   it("resolves a valid session on a read", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
@@ -162,18 +162,18 @@ describe("authenticateTenant", () => {
   it("does not fall back to a valid cookie when no Agent token is configured", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
     const unconfigured = authenticateTenant(request({ token, authorization: `Bearer ${AGENT_TOKEN}` }), {
-      origin: ORIGIN, now: NOW, store, agentToken: undefined, agentTenantId: "t-agent",
+      origin: ORIGIN, now: NOW, store, agentToken: undefined,
     });
     await expect(unconfigured).rejects.toMatchObject({ code: "unauthorized" });
   });
 
-  it("resolves the Agent bearer token to a bearer context without reading the cookie or the session store", async () => {
+  it("resolves the Agent bearer token to a bearer context for the tenant in the path, without reading the cookie or the session store", async () => {
     const untouched = { find: async () => { throw new Error("session store must not be read"); } } as unknown as D1TenantSessionStore;
     const context = await authenticateTenant(request({ token: "not-even-a-valid-cookie", authorization: `Bearer ${AGENT_TOKEN}` }), {
-      origin: ORIGIN, now: NOW, store: untouched, agentToken: AGENT_TOKEN, agentTenantId: "t-agent",
+      origin: ORIGIN, now: NOW, store: untouched, agentToken: AGENT_TOKEN,
     });
     expect(context).toEqual({
-      tenantId: "t-agent",
+      tenantId: "t-local",
       principalId: "agent:markdown-primary",
       transport: "bearer",
       scopes: ["documents:read", "comments:read", "comments:reply", "versions:submit"],
@@ -193,7 +193,7 @@ describe("authenticateTenant", () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
     await expect(authenticateTenant(request({ token }), { origin: ORIGIN, now, store })).rejects.toBeInstanceOf(TypeError);
     await expect(authenticateTenant(request({ authorization: `Bearer ${AGENT_TOKEN}` }), {
-      origin: ORIGIN, now, store, agentToken: AGENT_TOKEN, agentTenantId: "t-agent",
+      origin: ORIGIN, now, store, agentToken: AGENT_TOKEN,
     })).rejects.toBeInstanceOf(TypeError);
   });
 

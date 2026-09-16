@@ -41,10 +41,9 @@ export function createTenantSessionHttp(options: {
   readonly store: D1TenantSessionStore;
   readonly now: () => number;
   readonly agentToken?: string;
-  readonly agentTenantId?: string;
   readonly devSession: boolean;
 }): (request: Request, requestId: string) => Promise<Response | null> {
-  const { origin, store, now, agentToken, agentTenantId, devSession } = options;
+  const { origin, store, now, agentToken, devSession } = options;
 
   return async function handle(request: Request, requestId: string): Promise<Response | null> {
     const { pathname } = new URL(request.url);
@@ -52,7 +51,7 @@ export function createTenantSessionHttp(options: {
     if (pathname === SESSION_PATH) {
       if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
       try {
-        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken, agentTenantId });
+        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken });
         // An Agent bearer authenticates the tenant API, but it is not a
         // browser session: there is no session to describe here.
         if (context.transport === "bearer") return accessErrorResponse(new TenantAccessError("unauthorized"), requestId);
@@ -94,7 +93,7 @@ export function createTenantSessionHttp(options: {
     if (pathname === LOGOUT_PATH) {
       if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
       try {
-        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken, agentTenantId });
+        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken });
         // Nor is there a session for an Agent bearer to end.
         if (context.transport === "bearer") return accessErrorResponse(new TenantAccessError("unauthorized"), requestId);
         if (context.sessionHash) await store.revoke(context.sessionHash, requestId, now());

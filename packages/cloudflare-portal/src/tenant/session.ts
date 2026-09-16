@@ -152,9 +152,8 @@ export async function authenticateTenant(
     readonly origin: string;
     readonly now: number;
     readonly store: D1TenantSessionStore;
-    /** AGENT_API_TOKEN and AGENT_TENANT_ID; either one unset refuses every bearer. */
+    /** AGENT_API_TOKEN; unset refuses every bearer. The tenant it acts for comes from the request path, not from configuration. */
     readonly agentToken?: string;
-    readonly agentTenantId?: string;
   },
 ): Promise<TenantContext> {
   const { origin, now, store } = options;
@@ -163,7 +162,7 @@ export async function authenticateTenant(
   // Any Authorization header takes the Agent bearer path, and its verdict is
   // final: a rejected bearer never falls back to the cookie, even a valid one.
   if (request.headers.get("authorization") !== null) {
-    return authenticateAgent(request, { origin, token: options.agentToken, tenantId: options.agentTenantId });
+    return authenticateAgent(request, { origin, token: options.agentToken });
   }
 
   if (new URL(request.url).origin !== origin || request.headers.get("sec-fetch-site") === "cross-site") {
