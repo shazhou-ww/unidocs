@@ -175,14 +175,11 @@ describe("评论流程", () => {
 
     await userEvent.click(within(p).getByRole("button", { name: "修改" }));
 
-    // 原文本就同时出现在折叠摘要与展开的原评论卡片里；「修改」会再压一份副本进草稿块，
-    // 所以这里按 getAllByText 断言「原评论留在原地」——它不是消失后被替换，是还在，
-    // 且草稿块里多了一份注明来源的副本。用单数 getByText 断言会在功能正确时反而报
-    // 「多个匹配」，不能真的分辨行为，所以改成这样。
     const note = within(p).getByRole("note", { name: "未发送的评论" });
     expect(note).toHaveTextContent("改自评论 1");
     expect(note).toHaveTextContent("这一句还能再收紧吗？");
-    expect(within(p).getAllByText("这一句还能再收紧吗？").length).toBeGreaterThanOrEqual(2);
+    expect(within(p).getAllByText("这一句还能再收紧吗？")).toHaveLength(2);
+    expect(p.querySelector(".ping-card")).toHaveTextContent("这一句还能再收紧吗？");
   });
 
   it("水位未覆盖的已发送评论标为正在执行", async () => {

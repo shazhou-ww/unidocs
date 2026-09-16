@@ -73,9 +73,6 @@ export function ThreadCard(props: {
 
   return (
     <article className={`thread-card${props.selected ? " selected" : ""}`}>
-      {/* 展开后 CommentCard 自己的按钮里也带着同一段原文（单条评论的 thread 尤其明显），
-          aria-label 覆盖（而非追加）这个按钮的可访问名，避免和内层撞车；
-          可见摘要文字不受影响，任何状态下都照常渲染。 */}
       <button
         type="button"
         onClick={props.onSelect}
@@ -85,7 +82,7 @@ export function ThreadCard(props: {
         <span className={props.state.open ? "status-open" : "status-answered"}>
           {props.state.open ? "待回复" : "已回复"}
         </span>
-        <span className="thread-excerpt">{first?.content.text}</span>
+        {!props.selected && <span className="thread-excerpt">{first?.content.text}</span>}
       </button>
 
       {props.selected && (

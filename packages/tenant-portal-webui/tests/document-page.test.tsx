@@ -17,6 +17,19 @@ function renderPage(props: { threadId?: string; commentIdx?: number } = {}) {
 }
 
 describe("DocumentPage", () => {
+  it.each([
+    ["th-open", "这一句还能再收紧吗？"],
+    ["th-answered", "这里要说清楚谁来切换"],
+  ])("展开讨论 %s 后评论正文只显示一次", async (threadId, text) => {
+    renderPage({ threadId });
+    const panel = await screen.findByRole("complementary", { name: "讨论" });
+    expect(within(panel).getAllByText(text)).toHaveLength(1);
+    const card = within(panel).getByText(text).closest(".thread-card")!;
+    expect(card.querySelector(".thread-excerpt")).toBeNull();
+    expect(card.querySelector(".ping-card")).toHaveTextContent(text);
+    expect(within(card as HTMLElement).getByRole("button", { name: /的讨论 · 折叠/ })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("版本历史独立回看，返回后保留选中的讨论", async () => {
     renderPage({ threadId: "th-answered" });
     await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
@@ -265,9 +278,7 @@ describe("DocumentPage", () => {
       </ClientProvider>,
     );
     const p = await screen.findByRole("complementary", { name: "讨论" });
-    // 先确认真的加载成功过一次——有旧内容可留。th-open 被选中时展开的评论卡片和折叠
-    // 摘要里都有这段原文，用 getAllByText 而不是 getByText，免得两处匹配互相打架。
-    await waitFor(() => expect(within(p).getAllByText("这一句还能再收紧吗？").length).toBeGreaterThan(0));
+    expect(await within(p).findByText("这一句还能再收紧吗？")).toBeInTheDocument();
 
     // 发送这一条本身（POST）必须成功；只有它之后紧跟着的 reload()（GET）失败。
     failReads = true;
@@ -279,7 +290,7 @@ describe("DocumentPage", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("刷新失败"));
     expect(screen.getByText("只读 · 内容由 Agent 编辑")).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "讨论" })).toBeInTheDocument();
-    expect(within(p).getAllByText("这一句还能再收紧吗？").length).toBeGreaterThan(0);
+    expect(within(p).getByText("这一句还能再收紧吗？")).toBeInTheDocument();
   });
 
   // 设计文档 §5.4：首版本产生前不能创建 thread 或追加 comment——use-document.ts
