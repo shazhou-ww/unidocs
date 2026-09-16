@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { googleIdentityFromConfirmedLogin, type AdminContext } from "@unidocs/portal-service";
 import { hashSessionSecret } from "../src/auth.js";
 import { D1PortalAuthRepository } from "../src/auth-repository.js";
@@ -6,6 +7,17 @@ import { createTenantMembersHttp } from "../src/tenant-members-http.js";
 import { D1TenantMemberRepository } from "../src/tenant-members-repository.js";
 import { D1TenantSessionStore } from "../src/tenant/session.js";
 import { startRealD1, type RealD1 } from "./tenant/real-d1.js";
+
+/** Runs `before` right ahead of the repository's batch: a deterministic interleaving. */
+function interleaved(db: D1Database, before: () => Promise<void>): D1Database {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property === "batch") return async (statements: D1PreparedStatement[]) => { await before(); return target.batch(statements); };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
 
 const ORIGIN = "https://portal.example";
 const NOW = Math.floor(Date.now() / 1000);
@@ -131,6 +143,22 @@ describe("tenant members admin API (real D1)", () => {
     const response = await call("POST", "/tenant-members", { body: { tenantId: "t1", email: "a@example.com" } });
     expect(response.status).toBe(403);
     expect(await real.db.prepare("SELECT COUNT(*) AS n FROM portal_tenant_members").first("n")).toBe(0);
+  });
+
+  it("answers 403 without writing when the administrator's authority is revoked between the read and the batch", async () => {
+    const created = await add();
+    const { store, hash } = await bindAndSignIn(created.memberId);
+    const etag = await currentEtag(created.memberId);
+    const racingHandle = createTenantMembersHttp(new D1TenantMemberRepository(interleaved(real.db, async () => {
+      await real.db.prepare("UPDATE portal_session_families SET revoked_at = ?").bind(NOW).run();
+    }), () => NOW));
+    const response = await racingHandle(new Request(`${ORIGIN}/admin/api/v1/tenant-members/${created.memberId}`, {
+      method: "DELETE", headers: { "idempotency-key": "race", "if-match": etag },
+    }), admin, "req-race");
+    expect(response.status).toBe(403);
+    expect((await response.json() as { error: { code: string } }).error.code).toBe("forbidden");
+    expect(await real.db.prepare("SELECT active FROM portal_tenant_members WHERE member_id = ?").bind(created.memberId).first("active")).toBe(1);
+    expect(await store.find(hash, NOW)).not.toBeNull();
   });
 
   it("refuses a body with extra fields or a non-JSON content type", async () => {

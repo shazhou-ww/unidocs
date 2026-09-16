@@ -119,6 +119,7 @@ export class D1TenantMemberRepository implements TenantMemberRepository {
     } catch (error) {
       if (await this.receipt(context, "removeTenantMember", key, fingerprint) !== null) return;
       await check();
+      if (!await adminAuthorityQuery(this.db, context, this.now()).first()) throw new TenantMemberOperationError("forbidden");
       throw error;
     }
   }
@@ -144,6 +145,7 @@ export class D1TenantMemberRepository implements TenantMemberRepository {
     } catch (error) {
       if (await this.receipt(context, "revokeTenantMemberSessions", key, fingerprint) !== null) return;
       if (!await this.activeMember(memberId)) throw new TenantMemberOperationError("not_found");
+      if (!await adminAuthorityQuery(this.db, context, this.now()).first()) throw new TenantMemberOperationError("forbidden");
       throw error;
     }
   }
