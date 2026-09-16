@@ -103,7 +103,7 @@ test("filters, paginates, and opens audit event details", async () => {
   const allActionLabels = Array.from((screen.getByRole("combobox", { name: "审计动作" }) as HTMLSelectElement).options).map(option => option.text);
   const allResourceLabels = Array.from((screen.getByRole("combobox", { name: "审计资源" }) as HTMLSelectElement).options).map(option => option.text);
   expect(allActionLabels.every(label => !label.includes(".") && !label.includes("_"))).toBe(true);
-  expect(allResourceLabels).toEqual(["全部资源", "管理员", "文档类型", "文档契约", "类型卡片包", "视图包", "算子", "算子验证"]);
+  expect(allResourceLabels).toEqual(["全部资源", "管理员", "文档类型", "文档契约", "类型卡片包", "视图包", "算子", "算子验证", "租户成员"]);
   const firstRow = await screen.findByRole("row", { name: /administrator\.added/ });
   expect(firstRow).toHaveTextContent("lee.scott");
   expect(firstRow).toHaveTextContent("lee.scott@example.com");

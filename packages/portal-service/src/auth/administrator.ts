@@ -37,10 +37,13 @@ export interface BoundAdministrator {
   readonly active: boolean;
 }
 
-export function normalizeAdministratorEmail(email: string): string {
+/** Google account emails are matched after trimming and lower-casing, for administrators and tenant members alike. */
+export function normalizeGoogleEmail(email: string): string {
   const normalized = email.trim().toLowerCase();
   return AddAdministratorMemberRequestSchema.parse({ email: normalized }).email;
 }
+
+export const normalizeAdministratorEmail = normalizeGoogleEmail;
 
 export function googleIdentityFromVerifiedClaims(claims: Readonly<Record<string, unknown>>, now: number): AdminIdentity {
   return readGoogleIdentity(claims, now, false);
@@ -62,7 +65,7 @@ function readGoogleIdentity(claims: Readonly<Record<string, unknown>>, now: numb
   }
   let email: string;
   try {
-    email = normalizeAdministratorEmail(claims.email);
+    email = normalizeGoogleEmail(claims.email);
   } catch {
     throw new AdminAccessError("unauthorized");
   }

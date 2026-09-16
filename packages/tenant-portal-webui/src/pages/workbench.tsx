@@ -11,7 +11,7 @@ import { marked } from "marked";
 import { Bot, LayoutGrid, List, Plus, Search } from "lucide-react";
 import type { DocumentRecord } from "@unidocs/protocol-tenant-portal";
 import type { MarkdownSnapshot } from "@unidocs/tenant-portal-client";
-import { useClient } from "../client-context.js";
+import { useClient, useDraftScope } from "../client-context.js";
 import { createDraftStore } from "../drafts/draft-store.js";
 import { errorText } from "../error-text.js";
 import { loadDiscussionSummary, type DiscussionSummary } from "../model/discussion-summary.js";
@@ -46,7 +46,11 @@ function excerpt(content: string, length = 65): string {
 
 export function WorkbenchPage(props: { onDocumentCount?(count: number): void } = {}) {
   const client = useClient();
-  const draftStore = useMemo(() => createDraftStore(globalThis.localStorage), []);
+  const scope = useDraftScope();
+  const draftStore = useMemo(
+    () => createDraftStore(globalThis.localStorage, scope),
+    [scope.tenantId, scope.principalId],
+  );
   const [entries, setEntries] = useState<readonly Entry[] | null>(null);
   const [keyword, setKeyword] = useState("");
   const [failure, setFailure] = useState<string | null>(null);

@@ -126,7 +126,7 @@ describe("the operator loop on a real stack", () => {
     persistPath = await mkdtemp(join(tmpdir(), "unidocs-portal-operator-loop-"));
     logFile = join(persistPath, "runtime.log");
     // docTypes: [] or every document type boots; the portal implies the markdown Operator worker.
-    runtime = await startLocalRuntime({ docTypes: [], services: ["portal"], ports: PORTS, persistPath, logFile });
+    runtime = await startLocalRuntime({ docTypes: [], services: ["portal"], ports: PORTS, persistPath, logFile, tenantDevSession: true });
     ({ documentType } = await seedPortalCatalog(runtime));
   }, 240_000);
 

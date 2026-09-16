@@ -1,13 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { D1TenantSessionStore, TENANT_CSRF_COOKIE, TENANT_SESSION_COOKIE } from "../../src/tenant/session.js";
 import { createTenantSessionHttp } from "../../src/tenant/session-http.js";
+import { insertMember } from "./members.js";
 import { startRealD1, type RealD1 } from "./real-d1.js";
 
 const LOCAL = "http://127.0.0.1:8795";
 const PRODUCTION = "https://unidocs.shazhou.work";
 const NOW = 1_757_808_000;
 const AGENT_TOKEN = "agent-local-token-0123456789";
-const agent = { agentToken: AGENT_TOKEN, agentTenantId: "t-local" };
+const agent = { agentToken: AGENT_TOKEN };
 
 let real: RealD1;
 let store: D1TenantSessionStore;
@@ -15,6 +16,7 @@ let store: D1TenantSessionStore;
 beforeEach(async () => {
   real = await startRealD1();
   store = new D1TenantSessionStore(real.db);
+  await insertMember(real.db, { tenantId: "t-local", principalId: "user-local", memberId: "member-user-local" });
 });
 
 afterEach(async () => {
@@ -37,7 +39,7 @@ function cookieValue(response: Response, name: string): string | null {
 
 describe("GET /portal/auth/session", () => {
   it("issues a local session on a loopback origin when none exists", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request(`${LOCAL}/portal/auth/session`), "req-1");
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toEqual({ tenantId: "t-local", principalId: "user-local" });
@@ -47,7 +49,7 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("marks the session cookie HttpOnly and leaves the CSRF cookie readable", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request(`${LOCAL}/portal/auth/session`), "req-1");
     const headers = response!.headers.getSetCookie();
     const session = headers.find(value => value.startsWith(`${TENANT_SESSION_COOKIE}=`))!;
@@ -57,15 +59,20 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("never issues a session on a non-loopback origin", async () => {
-    const handle = createTenantSessionHttp({ origin: PRODUCTION, store, now: () => NOW });
-    const response = await handle(new Request(`${PRODUCTION}/portal/auth/session`), "req-1");
-    expect(response?.status).toBe(401);
-    expect(response!.headers.getSetCookie()).toEqual([]);
-    expect(await sessionRows()).toBe(0);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const handle = createTenantSessionHttp({ origin: PRODUCTION, store, now: () => NOW, devSession: true });
+      const response = await handle(new Request(`${PRODUCTION}/portal/auth/session`), "req-1");
+      expect(response?.status).toBe(401);
+      expect(response!.headers.getSetCookie()).toEqual([]);
+      expect(await sessionRows()).toBe(0);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("reuses an existing session instead of issuing another", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const first = await handle(new Request(`${LOCAL}/portal/auth/session`), "req-1");
     const token = cookieValue(first!, TENANT_SESSION_COOKIE)!;
     const second = await handle(new Request(`${LOCAL}/portal/auth/session`, {
@@ -77,7 +84,7 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("does not issue on a cross-site request", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
       headers: { "sec-fetch-site": "cross-site" },
     }), "req-1");
@@ -86,7 +93,7 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("does not issue when an Authorization header is present on loopback", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
       headers: { authorization: "Bearer x" },
     }), "req-1");
@@ -96,7 +103,7 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("does not issue for a mismatched request URL origin even with an Authorization header", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request("http://evil.test:8795/portal/auth/session", {
       headers: { authorization: "Bearer x" },
     }), "req-1");
@@ -106,7 +113,7 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("does not issue for a cross-site request even with an Authorization header", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
       headers: { authorization: "Bearer x", "sec-fetch-site": "cross-site" },
     }), "req-1");
@@ -116,7 +123,7 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("refuses a valid Agent bearer with 401: an Agent is not a browser session", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, ...agent });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true, ...agent });
     const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
       headers: { authorization: `Bearer ${AGENT_TOKEN}` },
     }), "req-1");
@@ -127,7 +134,7 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("refuses a valid Agent bearer with 401 on a non-loopback origin too", async () => {
-    const handle = createTenantSessionHttp({ origin: PRODUCTION, store, now: () => NOW, ...agent });
+    const handle = createTenantSessionHttp({ origin: PRODUCTION, store, now: () => NOW, devSession: true, ...agent });
     const response = await handle(new Request(`${PRODUCTION}/portal/auth/session`, {
       headers: { authorization: `Bearer ${AGENT_TOKEN}` },
     }), "req-1");
@@ -135,15 +142,55 @@ describe("GET /portal/auth/session", () => {
   });
 
   it("returns null for a path it does not own", async () => {
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     await expect(handle(new Request(`${LOCAL}/api/v1/tenants/t-local/documents`), "req-1")).resolves.toBeNull();
+  });
+
+  it("never issues on loopback while the switch is off", async () => {
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: false });
+    const response = await handle(new Request(`${LOCAL}/portal/auth/session`), "req-1");
+    expect(response?.status).toBe(401);
+    expect(response!.headers.getSetCookie()).toEqual([]);
+    expect(await sessionRows()).toBe(0);
+  });
+
+  it("does not replace a present but invalid session cookie with a dev session", async () => {
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
+    const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
+      headers: { cookie: `${TENANT_SESSION_COOKIE}=${"x".repeat(43)}` },
+    }), "req-1");
+    expect(response?.status).toBe(401);
+    expect(await sessionRows()).toBe(0);
+  });
+
+  it("does not downgrade a deactivated member's session to a dev session", async () => {
+    const { token } = await store.issue("t-local", "user-local", NOW);
+    await real.db.prepare("UPDATE portal_tenant_members SET active = 0").run();
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
+    const response = await handle(new Request(`${LOCAL}/portal/auth/session`, {
+      headers: { cookie: `${TENANT_SESSION_COOKIE}=${token}` },
+    }), "req-1");
+    expect(response?.status).toBe(401);
+    expect(response!.headers.getSetCookie()).toEqual([]);
+  });
+
+  it("warns and refuses when the switch is on for a non-loopback origin", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const handle = createTenantSessionHttp({ origin: PRODUCTION, store, now: () => NOW, devSession: true });
+      const response = await handle(new Request(`${PRODUCTION}/portal/auth/session`), "req-9");
+      expect(response?.status).toBe(401);
+      expect(warn.mock.calls.map(([line]) => JSON.parse(String(line)))).toEqual([{ event: "tenant_dev_session_ignored", requestId: "req-9" }]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
 describe("POST /portal/auth/logout", () => {
   it("revokes the session and clears both cookies", async () => {
     const { token, csrfToken } = await store.issue("t-local", "user-local", NOW);
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request(`${LOCAL}/portal/auth/logout`, {
       method: "POST",
       headers: { cookie: `${TENANT_SESSION_COOKIE}=${token}`, "x-csrf-token": csrfToken, origin: LOCAL },
@@ -162,7 +209,7 @@ describe("POST /portal/auth/logout", () => {
 
   it("refuses a logout without the CSRF token and leaves the session intact", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true });
     const response = await handle(new Request(`${LOCAL}/portal/auth/logout`, {
       method: "POST",
       headers: { cookie: `${TENANT_SESSION_COOKIE}=${token}`, origin: LOCAL },
@@ -173,7 +220,7 @@ describe("POST /portal/auth/logout", () => {
 
   it("refuses a valid Agent bearer with 401 and neither revokes nor clears anything", async () => {
     const { token } = await store.issue("t-local", "user-local", NOW);
-    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, ...agent });
+    const handle = createTenantSessionHttp({ origin: LOCAL, store, now: () => NOW, devSession: true, ...agent });
     const response = await handle(new Request(`${LOCAL}/portal/auth/logout`, {
       method: "POST",
       headers: { authorization: `Bearer ${AGENT_TOKEN}`, cookie: `${TENANT_SESSION_COOKIE}=${token}` },

@@ -11,7 +11,7 @@
  * program, so the seed writes a session for its own administrator straight
  * into D1 (R14). It never writes `portal_bootstrap`: claiming it would lock the
  * configured bootstrap email out of local sign-in for good. That email is
- * invited through the API instead.
+ * invited through the API instead, and added to tenant t-local.
  *
  * Idempotent and resumable: it finds the type by `internalName === "markdown"`
  * and only performs the steps that are still missing, so an interrupted run is
@@ -406,9 +406,31 @@ async function inviteBootstrapEmail(runtime, api, log) {
   if (invited.status === 201) log(`portal seed: invited ${email} as an administrator`);
 }
 
+/** The local tenant the dev runtime's Agent and dev session both use. */
+const LOCAL_TENANT_ID = "t-local";
+
+/**
+ * Adds the bound bootstrap email as a member of the local tenant, so that
+ * account can sign in to the tenant console with real Google once the dev
+ * session switch is off. A membership that already exists is not a failure.
+ */
+async function addBootstrapTenantMember(runtime, api, log) {
+  const bindings = await step("read the portal bootstrap email", () => runtime.mf.getBindings(PORTAL_WORKER));
+  const email = typeof bindings.PORTAL_BOOTSTRAP_EMAIL === "string" ? bindings.PORTAL_BOOTSTRAP_EMAIL.trim() : "";
+  if (!email) return;
+  const added = await api("add the bootstrap email to the local tenant", {
+    method: "POST", path: "/tenant-members", json: { tenantId: LOCAL_TENANT_ID, email }, accept: [201, 409],
+  });
+  if (added.status === 409 && added.body?.error?.code !== "tenant_member_exists") {
+    throw new Error(`portal seed: add the bootstrap email to the local tenant failed with HTTP 409: ${JSON.stringify(added.body)}`);
+  }
+  if (added.status === 201) log(`portal seed: added ${email} to tenant ${LOCAL_TENANT_ID}`);
+}
+
 /**
  * Registers (or finishes registering) the markdown document type, points the
- * runtime's markdown Operator at it, and invites the bound bootstrap email.
+ * runtime's markdown Operator at it, invites the bound bootstrap email, and
+ * adds it to tenant t-local.
  * Idempotent: a complete registration costs one list, one read, one Operator
  * reconfiguration and the invitation check.
  *
@@ -439,6 +461,7 @@ export async function seedPortalCatalog(runtime, { log = () => {} } = {}) {
   if (registration?.enabled && registration.builtinOperator) {
     await pointOperatorAt(documentType);
     await inviteBootstrapEmail(runtime, api, log);
+    await addBootstrapTenantMember(runtime, api, log);
     log(`portal seed: markdown is already registered as ${documentType}`);
     return { documentType };
   }
@@ -479,5 +502,6 @@ export async function seedPortalCatalog(runtime, { log = () => {} } = {}) {
     log(`portal seed: enabled ${documentType}`);
   }
   await inviteBootstrapEmail(runtime, api, log);
+  await addBootstrapTenantMember(runtime, api, log);
   return { documentType };
 }

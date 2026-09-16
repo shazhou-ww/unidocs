@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { adminAuthorityGuard, adminAuthorityQuery } from "./admin-authority.js";
 import { auditAttribution } from "./audit-attribution.js";
 import { AdministratorMemberRecordSchema, type AdministratorMemberRecord, type ListAdministratorMembersResponse } from "@unidocs/protocol-admin-portal";
 import {
@@ -25,10 +26,7 @@ export class D1AdministratorRepository implements AdministratorRepository {
   constructor(private readonly database: D1Database, private readonly now: () => number = () => Math.floor(Date.now() / 1000)) { }
 
   private authorityStatement(context: AdminContext) {
-    return this.database.prepare(`SELECT member_id FROM portal_administrators WHERE member_id = ? AND issuer = ? AND subject = ? AND active = 1
-      AND (? = 'bearer' OR EXISTS (SELECT 1 FROM portal_sessions AS session JOIN portal_session_families AS family ON session.family_id = family.family_id
-        WHERE session.session_hash = ? AND family.member_id = portal_administrators.member_id AND family.revoked_at IS NULL AND session.expires_at > ?))`)
-      .bind(context.memberId, context.identity.issuer, context.identity.subject, context.transport, context.sessionHash ?? null, this.now());
+    return adminAuthorityQuery(this.database, context, this.now());
   }
 
   private async authorize(context: AdminContext): Promise<void> {
@@ -63,11 +61,7 @@ export class D1AdministratorRepository implements AdministratorRepository {
     const occurredAt = Math.floor(Date.parse(audit.occurredAt) / 1000);
     try {
       await this.database.batch([
-        this.database.prepare(`INSERT INTO portal_mutation_guard SELECT CASE WHEN EXISTS
-          (SELECT 1 FROM portal_administrators WHERE member_id = ? AND issuer = ? AND subject = ? AND active = 1
-            AND (? = 'bearer' OR EXISTS (SELECT 1 FROM portal_sessions AS session JOIN portal_session_families AS family ON session.family_id = family.family_id
-              WHERE session.session_hash = ? AND family.member_id = portal_administrators.member_id AND family.revoked_at IS NULL AND session.expires_at > ?))) THEN 1 ELSE 0 END`)
-          .bind(context.memberId, context.identity.issuer, context.identity.subject, context.transport, context.sessionHash ?? null, this.now()),
+        adminAuthorityGuard(this.database, context, this.now()),
         this.database.prepare("DELETE FROM portal_mutation_guard"),
         this.database.prepare("INSERT INTO portal_idempotency_receipts VALUES (?, 'addAdministratorMember', ?, ?, ?, ?)")
           .bind(context.memberId, key, fingerprint, JSON.stringify(response), member.addedAt),
@@ -116,11 +110,7 @@ export class D1AdministratorRepository implements AdministratorRepository {
     const occurredAt = Math.floor(Date.parse(audit.occurredAt) / 1000);
     try {
       await this.database.batch([
-        this.database.prepare(`INSERT INTO portal_mutation_guard SELECT CASE WHEN EXISTS
-          (SELECT 1 FROM portal_administrators WHERE member_id = ? AND issuer = ? AND subject = ? AND active = 1
-            AND (? = 'bearer' OR EXISTS (SELECT 1 FROM portal_sessions AS session JOIN portal_session_families AS family ON session.family_id = family.family_id
-              WHERE session.session_hash = ? AND family.member_id = portal_administrators.member_id AND family.revoked_at IS NULL AND session.expires_at > ?))) THEN 1 ELSE 0 END`)
-          .bind(context.memberId, context.identity.issuer, context.identity.subject, context.transport, context.sessionHash ?? null, this.now()),
+        adminAuthorityGuard(this.database, context, this.now()),
         this.database.prepare("DELETE FROM portal_mutation_guard"),
         this.database.prepare("INSERT INTO portal_idempotency_receipts VALUES (?, 'removeAdministratorMember', ?, ?, 'null', ?)")
           .bind(context.memberId, key, fingerprint, audit.occurredAt),

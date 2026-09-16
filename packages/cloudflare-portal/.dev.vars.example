@@ -25,24 +25,45 @@
 GATEWAY_OIDC_CLIENT_ID=
 GATEWAY_OIDC_CLIENT_SECRET=
 
-# The Google account that becomes the first administrator. Required to get in
-# at all: nobody is an administrator on a fresh database, and sign-in refuses
-# every identity until one is designated here (the console shows "no
-# permission"). Use the same address you sign in to Google with.
+# The Google account that becomes the first administrator. Required to get
+# into the *admin* console at all: nobody is an administrator on a fresh
+# database, and admin sign-in refuses every identity until one is designated
+# here (the console shows "no permission"). Use the same address you sign in
+# to Google with.
+#
+# This is administrator bootstrap only. It is NOT needed for the tenant
+# console: the tenant plane is self-service, so any Google account can sign in
+# at `/portal/auth/login` and gets its own tenant automatically, whether or
+# not this is set.
 #
 # Under `pnpm dev portal` the dev seed (see the end of this file) invites this
 # address as an administrator on every boot, so it signs in as an invited
-# member and the bootstrap row is never claimed. Changing it adds the new
-# address and leaves the old one; to start over, stop the dev server and delete
-# `.wrangler/miniflare` at the repository root — that is the local D1 database.
-# Without the seed (a bare `startLocalRuntime`), it is consumed once: the first
-# successful sign-in claims the bootstrap row, and further administrators are
-# added from inside the console.
+# member and the bootstrap row is never claimed. The seed also adds it as a
+# member of tenant `t-local`, purely so this one address gets a stable, known
+# tenant id across restarts instead of a fresh one every time the local
+# database is reset — not because membership is required to sign in. Changing
+# it adds the new address and leaves the old one; to start over, stop the dev
+# server and delete `.wrangler/miniflare` at the repository root — that is the
+# local D1 database. Without the seed (a bare `startLocalRuntime`), it is
+# consumed once: the first successful admin sign-in claims the bootstrap row,
+# and further administrators are added from inside the console.
 #
 # Also settable as UNIDOCS_PORTAL_BOOTSTRAP_EMAIL in the environment, which
 # overrides this line.
 
 PORTAL_BOOTSTRAP_EMAIL=
+
+# Local sign-in shortcut for the tenant console. Off by default: `pnpm dev
+# portal` then signs in with real Google — any account, self-service, no
+# PORTAL_BOOTSTRAP_EMAIL required (the seed still adds PORTAL_BOOTSTRAP_EMAIL
+# as a member of t-local when set, only to pin that address to a stable
+# tenant id). Set to "true" to get a t-local / user-local session without
+# signing in; it only works on a loopback PORTAL_ORIGIN. While it is on,
+# "sign out" only ends the current session: the console's next session probe
+# carries no cookie and is handed a fresh dev session. Turn it off to test real
+# sign-in and sign-out.
+#
+# PORTAL_TENANT_DEV_SESSION=true
 
 # The markdown Operator loop. `pnpm dev portal` starts the markdown worker
 # beside the portal and generates both values on every boot, handing the same

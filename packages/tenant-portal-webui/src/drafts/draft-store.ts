@@ -5,7 +5,17 @@
 import type { DocumentLocation } from "@unidocs/protocol-tenant-portal";
 import type { VersionIdx } from "@unidocs/tenant-portal-client";
 
-const STORAGE_KEY = "unidocs.portal.drafts.v1";
+/** v1 不分身份，同一浏览器换人登录会看到前一个人的草稿。只在迁移时读。 */
+const LEGACY_STORAGE_KEY = "unidocs.portal.drafts.v1";
+
+export interface DraftScope {
+  readonly tenantId: string;
+  readonly principalId: string;
+}
+
+export function draftStorageKey(scope: DraftScope): string {
+  return `unidocs.portal.drafts.v2:${scope.tenantId}:${scope.principalId}`;
+}
 
 export interface Draft {
   readonly draftId: string;
@@ -38,14 +48,16 @@ export function anchorKeyOf(input: { threadId: string | null; location: Document
   return `location:${input.location.locationType}:${JSON.stringify(input.location.payload)}`;
 }
 
-export function createDraftStore(storage: Storage): DraftStore {
+export function createDraftStore(storage: Storage, scope: DraftScope): DraftStore {
   // storage 可能抛异常（无痕模式、站点存储被禁用）。草稿是用户写的字，
   // 存不进去也不能丢——退化为内存副本，本次会话内仍然可用。
-  let cache: Draft[] = read();
+  const storageKey = draftStorageKey(scope);
+  let cache: Draft[] = read(storageKey);
+  migrateLegacy();
 
-  function read(): Draft[] {
+  function read(key: string): Draft[] {
     try {
-      const raw = storage.getItem(STORAGE_KEY);
+      const raw = storage.getItem(key);
       if (raw === null) return [];
       const parsed: unknown = JSON.parse(raw);
       return Array.isArray(parsed) ? (parsed as Draft[]) : [];
@@ -54,12 +66,38 @@ export function createDraftStore(storage: Storage): DraftStore {
     }
   }
 
-  function write(drafts: Draft[]): void {
+  /**
+   * 生产此前没有租户面，v1 草稿只可能来自本地开发。第一次以某个身份加载时并入它，
+   * 已有同 draftId 的以 v2 为准。v1 只有在合并结果确实落盘之后才删——如果 setItem
+   * 半路失败（比如配额满了），v1 留着，草稿还能在下次加载时重新合并，不会两边都丢。
+   */
+  function migrateLegacy(): void {
+    let legacy: Draft[];
+    try {
+      if (storage.getItem(LEGACY_STORAGE_KEY) === null) return;
+      legacy = read(LEGACY_STORAGE_KEY);
+    } catch {
+      return;
+    }
+    const known = new Set(cache.map(item => item.draftId));
+    const moved = legacy.filter(item => !known.has(item.draftId));
+    const persisted = moved.length === 0 || write([...cache, ...moved]);
+    if (!persisted) return;
+    try {
+      storage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      // 删不掉就留着，下次加载再合并一次；不会因为删除失败而丢草稿。
+    }
+  }
+
+  function write(drafts: Draft[]): boolean {
     cache = drafts;
     try {
-      storage.setItem(STORAGE_KEY, JSON.stringify(drafts));
+      storage.setItem(storageKey, JSON.stringify(drafts));
+      return true;
     } catch {
       // 只保留内存副本。
+      return false;
     }
   }
 

@@ -6,11 +6,12 @@ import {
 } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
 import { DocumentPage } from "../src/pages/document.js";
+import { TEST_DRAFT_SCOPE } from "./draft-scope.js";
 
 function renderPage(props: { threadId?: string; commentIdx?: number } = {}) {
   const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
   return render(
-    <ClientProvider client={client}>
+    <ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}>
       <DocumentPage documentId="doc-sample" threadId={props.threadId} commentIdx={props.commentIdx} />
     </ClientProvider>,
   );
@@ -101,7 +102,7 @@ describe("DocumentPage", () => {
           : version) };
       },
     };
-    render(<ClientProvider client={withProvenance}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    render(<ClientProvider client={withProvenance} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
     await screen.findByRole("region", { name: "历史版本 v2" });
     expect(screen.queryByRole("button", { name: "设为当前版本" })).not.toBeInTheDocument();
@@ -121,7 +122,7 @@ describe("DocumentPage", () => {
       return inner(request);
     };
     const client = createTenantPortalClient({ tenantId: "t1", transport });
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
     await userEvent.click(await screen.findByRole("button", { name: "查看 v0" }));
     await userEvent.click(await screen.findByRole("button", { name: "设为当前版本" }));
@@ -142,7 +143,7 @@ describe("DocumentPage", () => {
       ? Promise.resolve({ ok: false, error: { error: { code: "version_conflict", message: "changed", requestId: "r1" } } })
       : inner(request);
     const client = createTenantPortalClient({ tenantId: "t1", transport });
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
     await userEvent.click(await screen.findByRole("button", { name: "查看 v0" }));
     await userEvent.click(await screen.findByRole("button", { name: "设为当前版本" }));
@@ -161,7 +162,7 @@ describe("DocumentPage", () => {
       ? Promise.resolve({ ok: false, error: { error: { code: "transport_failure", message: "offline", requestId: "r1" } } })
       : inner(request);
     const client = createTenantPortalClient({ tenantId: "t1", transport });
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     await userEvent.click(await screen.findByRole("button", { name: "版本历史" }));
     await userEvent.click(await screen.findByRole("button", { name: "查看 v0" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("版本加载失败");
@@ -273,7 +274,7 @@ describe("DocumentPage", () => {
     };
     const client = createTenantPortalClient({ tenantId: "t1", transport });
     render(
-      <ClientProvider client={client}>
+      <ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}>
         <DocumentPage documentId="doc-sample" threadId="th-open" />
       </ClientProvider>,
     );
@@ -301,7 +302,7 @@ describe("DocumentPage", () => {
       tenantId: "t1",
       transport: createMemoryTransport({ seed: { documents: [{ documentId: "doc-new", name: "新作品", versions: [], threads: [] }] } }),
     });
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-new" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-new" /></ClientProvider>);
 
     expect(await screen.findByText(/等待 Operator 初始化/)).toBeInTheDocument();
 

@@ -1,14 +1,14 @@
 import { isLocalDevOrigin, TenantAccessError } from "@unidocs/portal-service";
-import { authenticateTenant, D1TenantSessionStore, TENANT_CSRF_COOKIE, TENANT_SESSION_COOKIE, TENANT_SESSION_TTL_SECONDS } from "./session.js";
+import { authenticateTenant, D1TenantSessionStore, DEV_PRINCIPAL_ID, DEV_TENANT_ID, TENANT_CSRF_COOKIE, TENANT_SESSION_COOKIE, TENANT_SESSION_TTL_SECONDS } from "./session.js";
 
 const SESSION_PATH = "/portal/auth/session";
 const LOGOUT_PATH = "/portal/auth/logout";
 
-function sessionCookie(token: string): string {
+export function sessionCookie(token: string): string {
   return `${TENANT_SESSION_COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${TENANT_SESSION_TTL_SECONDS}`;
 }
 
-function csrfCookie(token: string): string {
+export function csrfCookie(token: string): string {
   return `${TENANT_CSRF_COOKIE}=${token}; Path=/; Secure; SameSite=Strict; Max-Age=${TENANT_SESSION_TTL_SECONDS}`;
 }
 
@@ -27,6 +27,10 @@ function accessErrorResponse(error: TenantAccessError, requestId: string): Respo
   );
 }
 
+function carriesSessionCookie(request: Request): boolean {
+  return (request.headers.get("cookie") ?? "").split(";").some(part => part.trim().split("=", 1)[0] === TENANT_SESSION_COOKIE);
+}
+
 /**
  * `/portal/auth/session` and `/portal/auth/logout`. Any other path returns
  * null so the worker can try the next handler; a method mismatch on one of
@@ -37,9 +41,9 @@ export function createTenantSessionHttp(options: {
   readonly store: D1TenantSessionStore;
   readonly now: () => number;
   readonly agentToken?: string;
-  readonly agentTenantId?: string;
+  readonly devSession: boolean;
 }): (request: Request, requestId: string) => Promise<Response | null> {
-  const { origin, store, now, agentToken, agentTenantId } = options;
+  const { origin, store, now, agentToken, devSession } = options;
 
   return async function handle(request: Request, requestId: string): Promise<Response | null> {
     const { pathname } = new URL(request.url);
@@ -47,50 +51,40 @@ export function createTenantSessionHttp(options: {
     if (pathname === SESSION_PATH) {
       if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
       try {
-        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken, agentTenantId });
+        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken });
         // An Agent bearer authenticates the tenant API, but it is not a
         // browser session: there is no session to describe here.
         if (context.transport === "bearer") return accessErrorResponse(new TenantAccessError("unauthorized"), requestId);
         return Response.json({ tenantId: context.tenantId, principalId: context.principalId });
       } catch (error) {
         if (!(error instanceof TenantAccessError)) throw error;
-        // Only an unauthorized (missing/invalid/expired session) request on a
-        // loopback origin gets auto-issued, and only when the request also
-        // carries none of the signals authenticateTenant treats as untrusted:
-        // no Authorization header (Bearer never falls back to a cookie, so it
-        // must stay 401, not be upgraded to a fresh session), the request URL
-        // origin matches the configured origin (no DNS rebinding), and the
-        // request is not marked cross-site.
-        //
-        // Of these three, the Authorization check is the load-bearing one.
-        // authenticateTenant (session.ts) throws "unauthorized" from two
-        // different places: from the Agent bearer path (agent-auth.ts) when an
-        // Authorization header is present and its token is rejected (Bearer
-        // must never fall back to the cookie), or later, once
-        // the origin/cross-site check has already passed, when the session
-        // cookie is missing/invalid. So "unauthorized" alone does not tell
-        // you which case you're in - without the Authorization check here, a
-        // rejected Bearer request would look identical to a plain missing
-        // session and get upgraded to a fresh one, turning the local-dev
-        // convenience into a CSRF/rebinding amplifier. The origin-match and
-        // not-cross-site checks below are defence in depth: once Authorization
-        // is confirmed absent, authenticateTenant has already enforced both
-        // before it could reach the "unauthorized" throw, so they cannot
-        // themselves be false here - they guard against this handler's
-        // precondition ever drifting out of sync with session.ts's, not
-        // against a request that reaches this line with either one violated.
+        // The local dev session is opt-in (PORTAL_TENANT_DEV_SESSION) and only
+        // for a request that carries no session cookie at all: a present but
+        // invalid one (expired, revoked, member removed) stays 401 instead of
+        // silently becoming someone else. The Authorization check is the
+        // load-bearing one of the rest: authenticateTenant throws
+        // "unauthorized" both for a rejected bearer and for a missing session,
+        // and a rejected bearer must never be upgraded to a session. The origin
+        // and cross-site checks repeat what authenticateTenant already enforced
+        // before it could throw "unauthorized"; they guard against the two
+        // drifting apart.
         if (
           error.code === "unauthorized"
-          && isLocalDevOrigin(origin)
+          && devSession
           && request.headers.get("authorization") === null
+          && !carriesSessionCookie(request)
           && new URL(request.url).origin === origin
           && request.headers.get("sec-fetch-site") !== "cross-site"
         ) {
-          const { token, csrfToken } = await store.issue("t-local", "user-local", now());
+          if (!isLocalDevOrigin(origin)) {
+            console.warn(JSON.stringify({ event: "tenant_dev_session_ignored", requestId }));
+            return accessErrorResponse(error, requestId);
+          }
+          const { token, csrfToken } = await store.issueDevSession(now());
           const headers = new Headers();
           headers.append("Set-Cookie", sessionCookie(token));
           headers.append("Set-Cookie", csrfCookie(csrfToken));
-          return Response.json({ tenantId: "t-local", principalId: "user-local" }, { headers });
+          return Response.json({ tenantId: DEV_TENANT_ID, principalId: DEV_PRINCIPAL_ID }, { headers });
         }
         return accessErrorResponse(error, requestId);
       }
@@ -99,10 +93,10 @@ export function createTenantSessionHttp(options: {
     if (pathname === LOGOUT_PATH) {
       if (request.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
       try {
-        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken, agentTenantId });
+        const context = await authenticateTenant(request, { origin, now: now(), store, agentToken });
         // Nor is there a session for an Agent bearer to end.
         if (context.transport === "bearer") return accessErrorResponse(new TenantAccessError("unauthorized"), requestId);
-        if (context.sessionHash) await store.revoke(context.sessionHash);
+        if (context.sessionHash) await store.revoke(context.sessionHash, requestId, now());
         const headers = new Headers();
         headers.append("Set-Cookie", clearedSessionCookie());
         headers.append("Set-Cookie", clearedCsrfCookie());

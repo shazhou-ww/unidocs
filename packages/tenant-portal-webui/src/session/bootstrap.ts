@@ -5,6 +5,7 @@
  * 遇到形状不对的成功响应宁可抛异常，也不猜一个 tenantId 出来（§ task-9 background）。
  */
 const SESSION_PATH = "/portal/auth/session";
+const LOGOUT_PATH = "/portal/auth/logout";
 const CSRF_COOKIE_NAME = "__Host-unidocs_tenant_csrf";
 
 export type TenantSession =
@@ -65,4 +66,18 @@ export function readCsrfCookie(): string | null {
     if (name === CSRF_COOKIE_NAME) return decodeURIComponent(value.join("="));
   }
   return null;
+}
+
+/**
+ * 结束当前会话。401 说明会话本来就没了（过期或被管理员强制下线），同样算已退出。
+ * 浏览器对 POST 自动带 Origin，服务端据此和 CSRF token 一起校验。
+ */
+export async function signOut(fetchImpl: typeof fetch = globalThis.fetch, csrfToken: string | null = readCsrfCookie()): Promise<void> {
+  const response = await fetchImpl(LOGOUT_PATH, {
+    method: "POST",
+    credentials: "include",
+    headers: csrfToken ? { "x-csrf-token": csrfToken } : {},
+  });
+  if (response.status === 204 || response.status === 401) return;
+  throw new TenantSessionError(`/portal/auth/logout responded with HTTP ${response.status}`, response.status);
 }

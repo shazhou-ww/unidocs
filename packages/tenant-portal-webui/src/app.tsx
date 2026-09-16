@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { TenantPortalClient } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "./client-context.js";
+import type { DraftScope } from "./drafts/draft-store.js";
 import { parseRoute, type Route } from "./router.js";
 import { WorkbenchPage } from "./pages/workbench.js";
 import { DocumentPage } from "./pages/document.js";
@@ -19,12 +20,12 @@ function useHashRoute(): Route {
   return route;
 }
 
-export function App(props: { client: TenantPortalClient }) {
+export function App(props: { client: TenantPortalClient; draftScope: DraftScope; onSignOut?: () => void }) {
   const route = useHashRoute();
   const [documentCount, setDocumentCount] = useState<number | null>(null);
 
   return (
-    <ClientProvider client={props.client}>
+    <ClientProvider client={props.client} draftScope={props.draftScope}>
       <section id="device-notice" className="device-notice" aria-labelledby="device-notice-title">
         <div className="brand"><span className="brand-mark"><img src={seal} alt="" /></span>UniDocs</div>
         <div className="device-notice-content">
@@ -34,7 +35,7 @@ export function App(props: { client: TenantPortalClient }) {
         </div>
       </section>
       <div id="app" className="app">
-        <Sidebar documentCount={documentCount} />
+        <Sidebar documentCount={documentCount} onSignOut={props.onSignOut} />
         <main className="main">
           {route.kind === "workbench"
             ? <WorkbenchPage onDocumentCount={setDocumentCount} />

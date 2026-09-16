@@ -13,7 +13,6 @@ const settings = {
 test("defaults to the selected production hostname without taking over the Gateway callback", () => {
   expect(portalGoogleConfigFromGateway(settings)).toMatchObject({
     origin: "https://unidocs.shazhou.work",
-    redirectUri: "https://unidocs.shazhou.work/admin/auth/callback",
     clientId: settings.GATEWAY_OIDC_CLIENT_ID,
   });
 });
@@ -24,7 +23,6 @@ test("reuses Gateway Google credentials but keeps Portal origin, callback and se
     clientId: settings.GATEWAY_OIDC_CLIENT_ID,
     clientSecret: settings.GATEWAY_OIDC_CLIENT_SECRET,
     origin: "https://portal.example",
-    redirectUri: "https://portal.example/admin/auth/callback",
   });
 });
 
@@ -51,7 +49,6 @@ test.each(["http://portal.example", "https://portal.example/", "https://portal.e
 test("accepts a loopback origin for local development, still with the Google issuer", () => {
   expect(portalGoogleConfigFromGateway(settings, "http://127.0.0.1:8795")).toMatchObject({
     origin: "http://127.0.0.1:8795",
-    redirectUri: "http://127.0.0.1:8795/admin/auth/callback",
     issuer: "https://accounts.google.com",
   });
   expect(portalGoogleConfigFromGateway(settings, "http://localhost:8795").origin).toBe("http://localhost:8795");
@@ -159,4 +156,8 @@ test.each([
   "http://127.0.0.1:80",
 ])("isLocalDevOrigin refuses %j whatever the caller checked", spelling => {
   expect(isLocalDevOrigin(spelling)).toBe(false);
+});
+
+test("no longer carries a redirect URI: each login surface derives its own callback", () => {
+  expect(portalGoogleConfigFromGateway(settings, "https://portal.example")).not.toHaveProperty("redirectUri");
 });

@@ -69,13 +69,13 @@ button:disabled {
   cursor: not-allowed;
 }
 
-button.primary {
+button.primary, a.primary {
   background: var(--ink);
   border-color: var(--ink);
   color: white;
 }
 
-button.primary:hover {
+button.primary:hover, a.primary:hover {
   background: #41443e;
 }
 

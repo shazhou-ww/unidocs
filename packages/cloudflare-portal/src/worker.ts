@@ -6,6 +6,8 @@ import { D1DocumentTypeRepository } from "./document-types-repository.js";
 import { serveAdminWebUi, serveTenantWebUi } from "./static-assets.js";
 import { createAdministratorsHttp } from "./administrators-http.js";
 import { D1AdministratorRepository } from "./administrators-repository.js";
+import { createTenantMembersHttp } from "./tenant-members-http.js";
+import { D1TenantMemberRepository } from "./tenant-members-repository.js";
 import { createAuditEventsHttp } from "./audit-events-http.js";
 import { D1AuditEventRepository } from "./audit-events-repository.js";
 import { createDocumentContractsHttp } from "./document-contracts-http.js";
@@ -44,9 +46,13 @@ import { createSnapshotRetention } from "./tenant/snapshot-retention.js";
 import { D1TenantSubmissionRepository } from "./tenant/submission-repository.js";
 import { D1TenantThreadRepository } from "./tenant/thread-repository.js";
 import { D1TenantVersionRepository } from "./tenant/version-repository.js";
+import { D1TenantLoginRepository } from "./tenant/login-repository.js";
+import { createTenantLoginHttp, TENANT_CALLBACK_PATH, TENANT_LOGIN_PATH } from "./tenant/login-http.js";
 
 function isTenantPath(path: string): boolean {
-  return path === "/portal/auth/session" || path === "/portal/auth/logout" || path.startsWith("/api/v1/tenants/");
+  return path === "/portal/auth/session" || path === "/portal/auth/logout"
+    || path === TENANT_LOGIN_PATH || path === TENANT_CALLBACK_PATH
+    || path.startsWith("/api/v1/tenants/");
 }
 
 /**
@@ -117,59 +123,80 @@ async function serveTenant(request: Request, env: Env, path: string, context?: E
   const now = () => Math.floor(Date.now() / 1000);
   let response: Response;
   try {
-    const store = new D1TenantSessionStore(env.DB);
-    // Plain string vars: reading them cannot throw, and an unset one simply
-    // refuses every bearer inside authenticateAgent.
-    const agent = { agentToken: env.AGENT_API_TOKEN, agentTenantId: env.AGENT_TENANT_ID };
-    const session = await createTenantSessionHttp({ origin: env.PORTAL_ORIGIN, store, now, ...agent })(request, requestId);
-    if (session) {
-      response = session;
+    // Google settings are read only here, on the two login paths, so a missing
+    // client leaves the rest of the tenant plane serving.
+    const login = await createTenantLoginHttp({
+      origin: env.PORTAL_ORIGIN,
+      now,
+      repository: new D1TenantLoginRepository(env.DB, now),
+      googleConfig: () => portalGoogleConfigFromGateway({
+        GATEWAY_OIDC_CLIENT_ID: env.GATEWAY_OIDC_CLIENT_ID,
+        GATEWAY_OIDC_CLIENT_SECRET: env.GATEWAY_OIDC_CLIENT_SECRET,
+        GATEWAY_OIDC_ISSUER: env.GATEWAY_OIDC_ISSUER,
+      }, env.PORTAL_ORIGIN),
+    })(request, requestId);
+    if (login) {
+      response = login;
     } else {
-      try {
-        const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store, ...agent });
-        // Built lazily, like CAS: `pnpm dev portal` binds neither the Markdown
-        // Operator service nor its key, so the target is only constructed when a
-        // committed write's type has a builtin Operator, and a construction
-        // failure is logged by the dispatcher instead of failing the write.
-        const dispatchToOperator = createOperatorDispatcher({
-          database: env.DB,
-          target: () => createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY),
-        });
-        const snapshotStores = tenantSnapshotStores(env);
-        const snapshots = snapshotStores(tenant.tenantId);
-        if (isSubmissionPath(path)) {
-          const retention = createSnapshotRetention({ database: env.DB, snapshots: snapshotStores });
-          response = await createAgentHttp({
-            submissions: new D1TenantSubmissionRepository(env.DB),
-            snapshots,
-            retention,
-            validateLocation: createLocationValidator(),
-          })(request, tenant, requestId);
-          // Versions only ever come from submissions, so each one the Agent
-          // lands is also the moment to repair any version whose retain was
-          // lost earlier. A refused or malformed request triggers nothing.
-          if (request.method === "POST" && response.status === 201) inBackground(context, retention.sweep());
-        } else {
-          const redeliverInitialization = createInitializationRedelivery({ database: env.DB, dispatch: dispatchToOperator });
-          response = await createTenantHttp({
-            catalog: new D1TenantCatalogRepository(env.DB),
-            documents: new D1TenantDocumentRepository(env.DB),
-            versions: new D1TenantVersionRepository(env.DB, snapshots),
-            threads: new D1TenantThreadRepository(env.DB),
-            validateLocation: createLocationValidator(),
-            // The response does not wait for the Operator. With no execution
-            // context (tests) the dispatch still starts, it is just not held
-            // open; it never rejects, so nothing is left unhandled.
-            onCommitted: write => inBackground(context, dispatchToOperator(write)),
-            onUninitializedRead: ({ tenantId, documentId }) => inBackground(context, redeliverInitialization(tenantId, documentId)),
-          })(request, tenant, requestId);
+      const store = new D1TenantSessionStore(env.DB);
+      // A plain string var: reading it cannot throw, and an unset one simply
+      // refuses every bearer inside authenticateAgent. The tenant a bearer
+      // acts for now comes from the request path, not from configuration.
+      const agent = { agentToken: env.AGENT_API_TOKEN };
+      const session = await createTenantSessionHttp({
+        origin: env.PORTAL_ORIGIN, store, now, ...agent,
+        // Unset in production config: `undefined === "true"` keeps it off.
+        devSession: env.PORTAL_TENANT_DEV_SESSION === "true",
+      })(request, requestId);
+      if (session) {
+        response = session;
+      } else {
+        try {
+          const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store, ...agent });
+          // Built lazily, like CAS: `pnpm dev portal` binds neither the Markdown
+          // Operator service nor its key, so the target is only constructed when a
+          // committed write's type has a builtin Operator, and a construction
+          // failure is logged by the dispatcher instead of failing the write.
+          const dispatchToOperator = createOperatorDispatcher({
+            database: env.DB,
+            target: () => createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY),
+          });
+          const snapshotStores = tenantSnapshotStores(env);
+          const snapshots = snapshotStores(tenant.tenantId);
+          if (isSubmissionPath(path)) {
+            const retention = createSnapshotRetention({ database: env.DB, snapshots: snapshotStores });
+            response = await createAgentHttp({
+              submissions: new D1TenantSubmissionRepository(env.DB),
+              snapshots,
+              retention,
+              validateLocation: createLocationValidator(),
+            })(request, tenant, requestId);
+            // Versions only ever come from submissions, so each one the Agent
+            // lands is also the moment to repair any version whose retain was
+            // lost earlier. A refused or malformed request triggers nothing.
+            if (request.method === "POST" && response.status === 201) inBackground(context, retention.sweep());
+          } else {
+            const redeliverInitialization = createInitializationRedelivery({ database: env.DB, dispatch: dispatchToOperator });
+            response = await createTenantHttp({
+              catalog: new D1TenantCatalogRepository(env.DB),
+              documents: new D1TenantDocumentRepository(env.DB),
+              versions: new D1TenantVersionRepository(env.DB, snapshots),
+              threads: new D1TenantThreadRepository(env.DB),
+              validateLocation: createLocationValidator(),
+              // The response does not wait for the Operator. With no execution
+              // context (tests) the dispatch still starts, it is just not held
+              // open; it never rejects, so nothing is left unhandled.
+              onCommitted: write => inBackground(context, dispatchToOperator(write)),
+              onUninitializedRead: ({ tenantId, documentId }) => inBackground(context, redeliverInitialization(tenantId, documentId)),
+            })(request, tenant, requestId);
+          }
+        } catch (error) {
+          if (!(error instanceof TenantAccessError)) throw error;
+          response = Response.json(
+            { error: { code: error.code, message: error.message, requestId } },
+            { status: error.code === "unauthorized" ? 401 : 403 },
+          );
         }
-      } catch (error) {
-        if (!(error instanceof TenantAccessError)) throw error;
-        response = Response.json(
-          { error: { code: error.code, message: error.message, requestId } },
-          { status: error.code === "unauthorized" ? 401 : 403 },
-        );
       }
     }
   } catch (error) {
@@ -241,13 +268,14 @@ export default {
       if (mcpResponse) return mcpResponse;
       if (new URL(request.url).origin === env.BUNDLE_ORIGIN) return serveBundleObject(request, env.BUNDLES, env.PORTAL_ORIGIN);
       // Ahead of the BFF, and ahead of reading the Google settings: the tenant
-      // UI has no login to gate it with (see `serveTenantWebUi`), the
-      // admin-shaped BFF would send an anonymous visitor to `/admin/login`,
-      // and it should still serve on an environment that has no Google client
-      // configured at all.
+      // shell is public on purpose (its routes are hash routes the server never
+      // sees, so a server-side gate would lose a deep link across sign-in; the
+      // gate is on the tenant API), the admin-shaped BFF would send an anonymous
+      // visitor to `/admin/login`, and it should still serve on an environment
+      // that has no Google client configured at all.
       // The bare origin is what a developer opens first, and it has no page of
-      // its own. Production routes only /admin, /mcp and the OAuth paths to this
-      // worker (wrangler.production.jsonc), so this only ever answers locally.
+      // its own. Production does not route `/` to this worker
+      // (wrangler.production.jsonc), so this only ever answers locally.
       if (requestPath === "/" && (request.method === "GET" || request.method === "HEAD")) {
         const requestId = crypto.randomUUID();
         console.log(JSON.stringify({ event: "portal_request", requestId, path: requestPath, status: 302 }));
@@ -299,12 +327,14 @@ export default {
         return createOperatorValidationsHttp(new D1OperatorValidationRepository(env.DB), operatorTarget.transport, operatorTarget.keys)(apiRequest, admin, requestId);
       };
       const operatorsHttp = createOperatorsHttp(new D1OperatorRepository(env.DB));
+      const tenantMembersHttp = createTenantMembersHttp(new D1TenantMemberRepository(env.DB));
       const response = await createPortalBff(config, repository, {
         bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null,
         bundleOrigin: env.BUNDLE_ORIGIN,
         adminApi: (apiRequest, admin, requestId) => {
           const path = new URL(apiRequest.url).pathname;
           if (path.startsWith("/admin/api/v1/administrators")) return administratorsHttp(apiRequest, admin, requestId);
+          if (path.startsWith("/admin/api/v1/tenant-members")) return tenantMembersHttp(apiRequest, admin, requestId);
           if (path === "/admin/api/v1/audit-events") return auditEventsHttp(apiRequest, admin, requestId);
           if (path.includes("/document-contracts")) return documentContractsHttp(apiRequest, admin, requestId);
           if (path.startsWith("/admin/api/v1/type-card-bundles")) return typeCardBundlesHttp(apiRequest, admin, requestId);

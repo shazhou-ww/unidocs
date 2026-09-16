@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
-import { createPortalGoogleLogin, LOGIN_COOKIE, portalGoogleConfigFromGateway, portalReturnPath, type PortalLoginTransaction } from "../src/index.js";
+import { createPortalGoogleLogin, createTenantGoogleLogin, LOGIN_COOKIE, portalGoogleConfigFromGateway, portalReturnPath, TENANT_LOGIN_COOKIE, tenantReturnPath, type PortalLoginTransaction } from "../src/index.js";
 
 let keys: Awaited<ReturnType<typeof generateKeyPair>>;
 let jwks: { keys: object[] };
@@ -29,7 +29,7 @@ async function setup(overrides: JWTPayload = {}, returnTo = "/admin/?tab=types#m
       expect(body.get("client_id")).toBe(config.clientId);
       expect(body.get("client_secret")).toBe(config.clientSecret);
       expect(body.get("code_verifier")).toBe(transaction.verifier);
-      expect(body.get("redirect_uri")).toBe(loginConfig.redirectUri);
+      expect(body.get("redirect_uri")).toBe(`${origin}/admin/auth/callback`);
       expect(body.get("grant_type")).toBe("authorization_code");
       const idToken = await new SignJWT({ iss: config.issuer, aud: config.clientId, sub: "google-subject", email: "admin@example.com", email_verified: true, iat: now, exp: now + 3600, auth_time: now, nonce: transaction.nonce, ...overrides })
         .setProtectedHeader({ alg: "RS256", kid: "google-test" }).sign(keys.privateKey);
@@ -51,7 +51,7 @@ async function setup(overrides: JWTPayload = {}, returnTo = "/admin/?tab=types#m
   const start = await login.begin(new Request(`${origin}/admin/auth/login?returnTo=${encodeURIComponent(returnTo)}`));
   const target = new URL(start.headers.get("location")!);
   const cookie = start.headers.get("set-cookie")!.split(";")[0];
-  const callback = (query = "") => new Request(`${loginConfig.redirectUri}?state=${target.searchParams.get("state")}&code=test-code&iss=${encodeURIComponent(config.issuer)}${query}`, { headers: { cookie } });
+  const callback = (query = "") => new Request(`${origin}/admin/auth/callback?state=${target.searchParams.get("state")}&code=test-code&iss=${encodeURIComponent(config.issuer)}${query}`, { headers: { cookie } });
   return { login, start, target, cookie, callback, fetcher, transactions, advance: (seconds: number) => { now += seconds; } };
 }
 
@@ -76,7 +76,7 @@ describe("Portal Google authorization-code flow", () => {
     const { target, start, transactions } = await setup();
     expect(start.status).toBe(303);
     expect(target.searchParams.get("client_id")).toBe(config.clientId);
-    expect(target.searchParams.get("redirect_uri")).toBe(config.redirectUri);
+    expect(target.searchParams.get("redirect_uri")).toBe(`${origin}/admin/auth/callback`);
     expect(target.searchParams.get("code_challenge_method")).toBe("S256");
     expect(target.searchParams.get("prompt")).toBe("select_account");
     expect(target.searchParams.get("nonce")).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -211,7 +211,7 @@ describe("Portal Google authorization-code flow", () => {
 
 describe("Portal Google login configuration", () => {
   const ports = { now: () => 0, put: async () => {}, take: async () => null };
-  const rawConfig = (loginOrigin: string) => ({ issuer: "https://accounts.google.com" as const, clientId: "client", clientSecret: "secret", origin: loginOrigin, redirectUri: `${loginOrigin}/admin/auth/callback` });
+  const rawConfig = (loginOrigin: string) => ({ issuer: "https://accounts.google.com" as const, clientId: "client", clientSecret: "secret", origin: loginOrigin });
 
   // createPortalGoogleLogin has its own copy of the origin/issuer guard
   // (independent of portalGoogleConfigFromGateway) — this is what let a
@@ -231,5 +231,57 @@ describe("Portal Google login configuration", () => {
   // config.issuer !== GOOGLE_ISSUER staying in the guard on its own.
   test("refuses a non-Google issuer even for an otherwise-valid loopback origin", () => {
     expect(() => createPortalGoogleLogin({ ...rawConfig("http://127.0.0.1:8795"), issuer: "http://127.0.0.1:8793" as never }, ports)).toThrow("Invalid Portal Google configuration");
+  });
+});
+
+describe("Tenant Google login surface", () => {
+  const ports = (put: (transaction: PortalLoginTransaction) => void) => ({
+    now: () => Math.floor(Date.now() / 1000),
+    put: async (transaction: PortalLoginTransaction) => put(transaction),
+    take: async () => null,
+    fetch: vi.fn<typeof fetch>(async input => {
+      if (String(input).endsWith("openid-configuration")) return Response.json(discovery);
+      throw new Error("Unexpected endpoint");
+    }),
+  });
+
+  test("begins on /portal/auth/login with its own callback and cookie", async () => {
+    let stored: PortalLoginTransaction | undefined;
+    const login = createTenantGoogleLogin(config, ports(transaction => { stored = transaction; }));
+    const start = await login.begin(new Request(`${origin}/portal/auth/login?returnTo=${encodeURIComponent("/portal/#/d/doc-1")}`));
+    const target = new URL(start.headers.get("location")!);
+    expect(start.status).toBe(303);
+    expect(target.searchParams.get("redirect_uri")).toBe(`${origin}/portal/auth/callback`);
+    expect(start.headers.get("set-cookie")).toMatch(new RegExp(`^${TENANT_LOGIN_COOKIE}=[A-Za-z0-9_-]{43}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600$`));
+    expect(stored?.returnTo).toBe("/portal/#/d/doc-1");
+  });
+
+  test("defaults the return path to /portal/", async () => {
+    let stored: PortalLoginTransaction | undefined;
+    const login = createTenantGoogleLogin(config, ports(transaction => { stored = transaction; }));
+    await login.begin(new Request(`${origin}/portal/auth/login`));
+    expect(stored?.returnTo).toBe("/portal/");
+  });
+
+  test("refuses the admin begin path", async () => {
+    const login = createTenantGoogleLogin(config, ports(() => {}));
+    await expect(login.begin(new Request(`${origin}/admin/auth/login`))).rejects.toThrow();
+  });
+
+  test("accepts a loopback origin, which the admin cookie name used to gate", () => {
+    const local = portalGoogleConfigFromGateway({ GATEWAY_OIDC_CLIENT_ID: "c", GATEWAY_OIDC_CLIENT_SECRET: "s" }, "http://127.0.0.1:8795");
+    expect(() => createTenantGoogleLogin(local, ports(() => {}))).not.toThrow();
+  });
+
+  test.each(["/portal/", "/portal/?tab=1", "/portal/#/d/doc-1/th-1/0", "/portal/index.html"])("accepts tenant return path %j", path => {
+    expect(tenantReturnPath(path)).toBe(path);
+  });
+
+  test.each([
+    "/portal", "/admin/", "https://attacker.example", "//attacker.example", "/portal/auth/login", "/portal/auth/callback",
+    "/portal/auth", "/portal/../admin/", "/portal/\\evil", "/portal/%2e%2e/admin", "/portal/%61uth/login", "/portal/ space",
+    "/portal/\nunsafe", `/portal/${"a".repeat(2050)}`,
+  ])("rejects tenant return path %j", path => {
+    expect(() => tenantReturnPath(path)).toThrow();
   });
 });

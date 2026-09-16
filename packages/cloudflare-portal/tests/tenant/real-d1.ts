@@ -14,11 +14,14 @@
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import type { D1Database } from "@cloudflare/workers-types";
+import type { D1Database, KVNamespace, R2Bucket } from "@cloudflare/workers-types";
 import { splitSqlStatements } from "../../../../stacks/unidocs-cloudflare/local/sql-statements.mjs";
 
 export interface RealD1 {
   readonly db: D1Database;
+  /** An empty KV namespace and R2 bucket from the same Miniflare, for tests that run the whole worker. */
+  readonly kv: KVNamespace;
+  readonly r2: R2Bucket;
   /** Applies one migration file by name, for a test that starts from an earlier schema. */
   applyMigration(file: string): Promise<void>;
   dispose(): Promise<void>;
@@ -40,6 +43,8 @@ export async function startRealD1(options: RealD1Options = {}): Promise<RealD1> 
       script: "export default { fetch() { return new Response('ok'); } };",
       compatibilityDate: "2025-08-17",
       d1Databases: { DB: `tenant-real-d1-${crypto.randomUUID()}` },
+      kvNamespaces: { OAUTH_KV: `tenant-real-kv-${crypto.randomUUID()}` },
+      r2Buckets: { BUNDLES: `tenant-real-r2-${crypto.randomUUID()}` },
     }],
   }));
   try {
@@ -54,7 +59,9 @@ export async function startRealD1(options: RealD1Options = {}): Promise<RealD1> 
     const files = (await readdir(MIGRATIONS)).filter(file => file.endsWith(".sql")).sort()
       .filter(file => options.through === undefined || file <= options.through);
     for (const file of files) await applyMigration(file);
-    return { db, applyMigration, dispose: () => miniflare.dispose() };
+    const kv = await miniflare.getKVNamespace("OAUTH_KV", WORKER) as unknown as KVNamespace;
+    const r2 = await miniflare.getR2Bucket("BUNDLES", WORKER) as unknown as R2Bucket;
+    return { db, kv, r2, applyMigration, dispose: () => miniflare.dispose() };
   } catch (error) {
     await miniflare.dispose();
     throw error;

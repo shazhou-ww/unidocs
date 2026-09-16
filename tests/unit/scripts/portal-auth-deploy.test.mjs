@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import { parse } from "jsonc-parser";
 import { describe, expect, test } from "vitest";
 import { checkPortalAuthDeployment, createPortalAuthDeploymentConfig, portalAuthDeploymentSummary } from "../../../stacks/unidocs-cloudflare/deploy/portal-auth.mjs";
 
@@ -6,12 +7,16 @@ const settings = { databaseId: "11111111-2222-4333-8444-555555555555", googleCli
 const template = { compatibility_date: "2026-09-10", routes: [{ pattern: "unidocs.shazhou.work/*" }], vars: { UNRELATED_SECRET: "must-not-copy" } };
 
 describe("Portal auth deployment preparation", () => {
-  test("approved production cutover owns only admin routes and a separate database", async () => {
-    const config = JSON.parse(await readFile(new URL("../../../packages/cloudflare-portal/wrangler.production.jsonc", import.meta.url), "utf8"));
+  test("approved production cutover owns the admin and tenant routes and a separate database", async () => {
+    const text = await readFile(new URL("../../../packages/cloudflare-portal/wrangler.production.jsonc", import.meta.url), "utf8");
+    const errors = [];
+    const config = parse(text, errors, { allowTrailingComma: true, disallowComments: false });
+    expect(errors, "wrangler.production.jsonc must parse").toEqual([]);
     expect(config.routes.map(route => route.pattern)).toEqual([
       "unidocs.shazhou.work/admin", "unidocs.shazhou.work/admin/*", "unidocs.shazhou.work/mcp",
       "unidocs.shazhou.work/.well-known/oauth-protected-resource/mcp",
       "unidocs.shazhou.work/.well-known/oauth-authorization-server", "unidocs.shazhou.work/oauth/admin-mcp/*",
+      "unidocs.shazhou.work/portal", "unidocs.shazhou.work/portal/*", "unidocs.shazhou.work/api/v1/tenants/*",
       "bundles.shazhou.work",
     ]);
     expect(config.d1_databases[0].database_id).not.toBe("d3c78c42-b32f-4a4d-86e4-6cf6341baa8f");

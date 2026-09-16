@@ -78,6 +78,7 @@ describe("a fresh portal database", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath,
+      tenantDevSession: true,
     });
     db = await runtime.mf.getD1Database("DB", "unidocs-portal");
   }, 180_000);
@@ -184,6 +185,7 @@ describe("a second boot on the same portal database", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath,
+      tenantDevSession: true,
     });
     try {
       const db = await runtime.mf.getD1Database("DB", "unidocs-portal");
@@ -219,6 +221,7 @@ describe("the markdown Operator beside the portal", () => {
       services: ["portal"],
       ports: PORTS,
       persistPath: operatorPersistPath,
+      tenantDevSession: true,
     });
   }, 180_000);
 
@@ -231,7 +234,6 @@ describe("the markdown Operator beside the portal", () => {
     const bindings = await runtime.mf.getBindings("unidocs-portal");
     expect(bindings.MARKDOWN_OPERATOR_HMAC_KEY).toMatch(/^[0-9a-f]{64}$/);
     expect(bindings.AGENT_API_TOKEN).toMatch(/\S/);
-    expect(bindings.AGENT_TENANT_ID).toBe("t-local");
     expect(runtime.secrets).toEqual({
       agentToken: bindings.AGENT_API_TOKEN,
       operatorHmacKey: bindings.MARKDOWN_OPERATOR_HMAC_KEY,

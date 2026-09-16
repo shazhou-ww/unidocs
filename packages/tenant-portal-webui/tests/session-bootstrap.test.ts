@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { describeConnectionFailure, loadTenantSession, TenantSessionError } from "../src/session/bootstrap.js";
+import { describe, expect, it, vi } from "vitest";
+import { describeConnectionFailure, loadTenantSession, signOut, TenantSessionError } from "../src/session/bootstrap.js";
 
 describe("loadTenantSession", () => {
   it("returns the tenant identity when signed in", async () => {
@@ -53,5 +53,23 @@ describe("describeConnectionFailure", () => {
 
   it("falls back to a generic message when the error is not even an Error", () => {
     expect(describeConnectionFailure("nope")).toEqual({ title: "无法连接到服务" });
+  });
+});
+
+describe("signOut", () => {
+  it("posts to the logout endpoint with the CSRF token", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
+    await signOut(fetchImpl, "csrf-token");
+    expect(fetchImpl).toHaveBeenCalledWith("/portal/auth/logout", { method: "POST", credentials: "include", headers: { "x-csrf-token": "csrf-token" } });
+  });
+
+  it("treats an already ended session as signed out", async () => {
+    await expect(signOut(async () => Response.json({ error: { code: "unauthorized" } }, { status: 401 }), "t")).resolves.toBeUndefined();
+  });
+
+  it("reports any other failure with its status", async () => {
+    const error = await signOut(async () => new Response(null, { status: 403 }), null).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TenantSessionError);
+    expect((error as TenantSessionError).status).toBe(403);
   });
 });

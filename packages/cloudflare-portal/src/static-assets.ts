@@ -59,11 +59,14 @@ export function isTenantWebUiPath(pathname: string): boolean {
  *   hashed assets are the only real paths. There is nothing to fall back from,
  *   and inventing path routes here would serve the shell on URLs the app
  *   itself never produces.
- * - **No authentication gate.** The tenant plane has no login yet;
- *   `createPortalBff` is admin-shaped and would send an anonymous visitor to
- *   `/admin/login`. So `worker.ts` calls this ahead of the BFF, which also
- *   means the security headers the BFF appends do not apply — they are set
- *   here instead. Revisit both when the tenant API and its sign-in land.
+ * - **No authentication gate, on purpose.** Because the app is hash-routed
+ *   (above), the server never sees `#/d/...`; a server-side gate would 303 an
+ *   unauthenticated deep link and lose that location across sign-in. The
+ *   shell carries no data — the gate is on the tenant API instead. So
+ *   `worker.ts` calls this ahead of the admin-shaped BFF, and sets the
+ *   security headers itself since the BFF's do not apply here.
+ *   `tests/production-routes-auth.test.ts` asserts the served shell carries
+ *   no local identity strings and that `index.html` stays `no-store`.
  */
 export function serveTenantWebUi(request: Request): Response | null {
   const url = new URL(request.url);
