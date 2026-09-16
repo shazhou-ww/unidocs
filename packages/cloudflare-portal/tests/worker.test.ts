@@ -395,4 +395,17 @@ describe("Worker tenant routes without Google or CAS configuration", () => {
     expect(response.status).toBe(401);
     expect(response.headers.getSetCookie()).toEqual([]);
   });
+
+  it("routes the tenant login endpoints through serveTenant and answers login=unavailable without Google", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => { });
+    try {
+      const response = await worker.fetch(new Request(`${ORIGIN}/portal/auth/login`), tenantEnv(real.db));
+      expect(response.status).toBe(303);
+      expect(new URL(response.headers.get("location")!).searchParams.get("login")).toBe("unavailable");
+      expect(response.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-ancestors 'none'");
+      expect(response.headers.get("X-Request-ID")).toBe(new URL(response.headers.get("location")!).searchParams.get("requestId"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

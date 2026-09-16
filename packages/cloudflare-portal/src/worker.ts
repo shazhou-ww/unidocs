@@ -44,9 +44,13 @@ import { createSnapshotRetention } from "./tenant/snapshot-retention.js";
 import { D1TenantSubmissionRepository } from "./tenant/submission-repository.js";
 import { D1TenantThreadRepository } from "./tenant/thread-repository.js";
 import { D1TenantVersionRepository } from "./tenant/version-repository.js";
+import { D1TenantLoginRepository } from "./tenant/login-repository.js";
+import { createTenantLoginHttp, TENANT_CALLBACK_PATH, TENANT_LOGIN_PATH } from "./tenant/login-http.js";
 
 function isTenantPath(path: string): boolean {
-  return path === "/portal/auth/session" || path === "/portal/auth/logout" || path.startsWith("/api/v1/tenants/");
+  return path === "/portal/auth/session" || path === "/portal/auth/logout"
+    || path === TENANT_LOGIN_PATH || path === TENANT_CALLBACK_PATH
+    || path.startsWith("/api/v1/tenants/");
 }
 
 /**
@@ -117,63 +121,79 @@ async function serveTenant(request: Request, env: Env, path: string, context?: E
   const now = () => Math.floor(Date.now() / 1000);
   let response: Response;
   try {
-    const store = new D1TenantSessionStore(env.DB);
-    // Plain string vars: reading them cannot throw, and an unset one simply
-    // refuses every bearer inside authenticateAgent.
-    const agent = { agentToken: env.AGENT_API_TOKEN, agentTenantId: env.AGENT_TENANT_ID };
-    const session = await createTenantSessionHttp({
-      origin: env.PORTAL_ORIGIN, store, now, ...agent,
-      // Unset in production config: `undefined === "true"` keeps it off.
-      devSession: env.PORTAL_TENANT_DEV_SESSION === "true",
+    // Google settings are read only here, on the two login paths, so a missing
+    // client leaves the rest of the tenant plane serving.
+    const login = await createTenantLoginHttp({
+      origin: env.PORTAL_ORIGIN,
+      now,
+      repository: new D1TenantLoginRepository(env.DB, now),
+      googleConfig: () => portalGoogleConfigFromGateway({
+        GATEWAY_OIDC_CLIENT_ID: env.GATEWAY_OIDC_CLIENT_ID,
+        GATEWAY_OIDC_CLIENT_SECRET: env.GATEWAY_OIDC_CLIENT_SECRET,
+        GATEWAY_OIDC_ISSUER: env.GATEWAY_OIDC_ISSUER,
+      }, env.PORTAL_ORIGIN),
     })(request, requestId);
-    if (session) {
-      response = session;
+    if (login) {
+      response = login;
     } else {
-      try {
-        const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store, ...agent });
-        // Built lazily, like CAS: `pnpm dev portal` binds neither the Markdown
-        // Operator service nor its key, so the target is only constructed when a
-        // committed write's type has a builtin Operator, and a construction
-        // failure is logged by the dispatcher instead of failing the write.
-        const dispatchToOperator = createOperatorDispatcher({
-          database: env.DB,
-          target: () => createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY),
-        });
-        const snapshotStores = tenantSnapshotStores(env);
-        const snapshots = snapshotStores(tenant.tenantId);
-        if (isSubmissionPath(path)) {
-          const retention = createSnapshotRetention({ database: env.DB, snapshots: snapshotStores });
-          response = await createAgentHttp({
-            submissions: new D1TenantSubmissionRepository(env.DB),
-            snapshots,
-            retention,
-            validateLocation: createLocationValidator(),
-          })(request, tenant, requestId);
-          // Versions only ever come from submissions, so each one the Agent
-          // lands is also the moment to repair any version whose retain was
-          // lost earlier. A refused or malformed request triggers nothing.
-          if (request.method === "POST" && response.status === 201) inBackground(context, retention.sweep());
-        } else {
-          const redeliverInitialization = createInitializationRedelivery({ database: env.DB, dispatch: dispatchToOperator });
-          response = await createTenantHttp({
-            catalog: new D1TenantCatalogRepository(env.DB),
-            documents: new D1TenantDocumentRepository(env.DB),
-            versions: new D1TenantVersionRepository(env.DB, snapshots),
-            threads: new D1TenantThreadRepository(env.DB),
-            validateLocation: createLocationValidator(),
-            // The response does not wait for the Operator. With no execution
-            // context (tests) the dispatch still starts, it is just not held
-            // open; it never rejects, so nothing is left unhandled.
-            onCommitted: write => inBackground(context, dispatchToOperator(write)),
-            onUninitializedRead: ({ tenantId, documentId }) => inBackground(context, redeliverInitialization(tenantId, documentId)),
-          })(request, tenant, requestId);
+      const store = new D1TenantSessionStore(env.DB);
+      // Plain string vars: reading them cannot throw, and an unset one simply
+      // refuses every bearer inside authenticateAgent.
+      const agent = { agentToken: env.AGENT_API_TOKEN, agentTenantId: env.AGENT_TENANT_ID };
+      const session = await createTenantSessionHttp({
+        origin: env.PORTAL_ORIGIN, store, now, ...agent,
+        // Unset in production config: `undefined === "true"` keeps it off.
+        devSession: env.PORTAL_TENANT_DEV_SESSION === "true",
+      })(request, requestId);
+      if (session) {
+        response = session;
+      } else {
+        try {
+          const tenant = await authenticateTenant(request, { origin: env.PORTAL_ORIGIN, now: now(), store, ...agent });
+          // Built lazily, like CAS: `pnpm dev portal` binds neither the Markdown
+          // Operator service nor its key, so the target is only constructed when a
+          // committed write's type has a builtin Operator, and a construction
+          // failure is logged by the dispatcher instead of failing the write.
+          const dispatchToOperator = createOperatorDispatcher({
+            database: env.DB,
+            target: () => createMarkdownOperatorValidationTarget(env.ADMIN_MARKDOWN_SERVICE, env.MARKDOWN_OPERATOR_HMAC_KEY),
+          });
+          const snapshotStores = tenantSnapshotStores(env);
+          const snapshots = snapshotStores(tenant.tenantId);
+          if (isSubmissionPath(path)) {
+            const retention = createSnapshotRetention({ database: env.DB, snapshots: snapshotStores });
+            response = await createAgentHttp({
+              submissions: new D1TenantSubmissionRepository(env.DB),
+              snapshots,
+              retention,
+              validateLocation: createLocationValidator(),
+            })(request, tenant, requestId);
+            // Versions only ever come from submissions, so each one the Agent
+            // lands is also the moment to repair any version whose retain was
+            // lost earlier. A refused or malformed request triggers nothing.
+            if (request.method === "POST" && response.status === 201) inBackground(context, retention.sweep());
+          } else {
+            const redeliverInitialization = createInitializationRedelivery({ database: env.DB, dispatch: dispatchToOperator });
+            response = await createTenantHttp({
+              catalog: new D1TenantCatalogRepository(env.DB),
+              documents: new D1TenantDocumentRepository(env.DB),
+              versions: new D1TenantVersionRepository(env.DB, snapshots),
+              threads: new D1TenantThreadRepository(env.DB),
+              validateLocation: createLocationValidator(),
+              // The response does not wait for the Operator. With no execution
+              // context (tests) the dispatch still starts, it is just not held
+              // open; it never rejects, so nothing is left unhandled.
+              onCommitted: write => inBackground(context, dispatchToOperator(write)),
+              onUninitializedRead: ({ tenantId, documentId }) => inBackground(context, redeliverInitialization(tenantId, documentId)),
+            })(request, tenant, requestId);
+          }
+        } catch (error) {
+          if (!(error instanceof TenantAccessError)) throw error;
+          response = Response.json(
+            { error: { code: error.code, message: error.message, requestId } },
+            { status: error.code === "unauthorized" ? 401 : 403 },
+          );
         }
-      } catch (error) {
-        if (!(error instanceof TenantAccessError)) throw error;
-        response = Response.json(
-          { error: { code: error.code, message: error.message, requestId } },
-          { status: error.code === "unauthorized" ? 401 : 403 },
-        );
       }
     }
   } catch (error) {
