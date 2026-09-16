@@ -103,7 +103,22 @@ describe("tenant login endpoints", () => {
     expect(session).toMatchObject({ tenantId: "t1", principalId: "user:m" });
   });
 
-  it("sends an account with no membership back with login=denied", async () => {
+  it("provisions a brand-new identity a tenant it was never granted, and signs it straight in", async () => {
+    const callback = await signIn(handler(google()));
+    expect(callback.status).toBe(303);
+    expect(callback.headers.get("location")).toBe(`${ORIGIN}/portal/#/d/doc-1`);
+    expect(setCookie(callback, TENANT_LOGIN_COOKIE)).toContain("Max-Age=0");
+    expect(setCookie(callback, TENANT_CSRF_COOKIE)).toMatch(/SameSite=Strict/);
+    const token = setCookie(callback, TENANT_SESSION_COOKIE)!.split(";")[0].split("=")[1];
+    const session = await new D1TenantSessionStore(real.db).find(await hashSessionSecret(token), now());
+    expect(session?.tenantId).toMatch(/^t-/);
+  });
+
+  it("sends an email already active under a different Google identity back with login=denied", async () => {
+    // "google-subject" is what `google()` signs the id token for; a different
+    // subject already holds this email, so this identity may neither bind to
+    // it nor provision a fresh tenant for it.
+    await insertMember(real.db, { tenantId: "t1", principalId: "user:holder", email: "member@example.com" });
     const callback = await signIn(handler(google()));
     const location = new URL(callback.headers.get("location")!);
     expect(`${location.origin}${location.pathname}`).toBe(`${ORIGIN}/portal/`);
