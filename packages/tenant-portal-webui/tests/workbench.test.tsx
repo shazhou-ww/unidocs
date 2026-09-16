@@ -8,10 +8,11 @@ import {
 } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
 import { WorkbenchPage } from "../src/pages/workbench.js";
+import { TEST_DRAFT_SCOPE } from "./draft-scope.js";
 
 function renderPage() {
   const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
-  return render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
+  return render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><WorkbenchPage /></ClientProvider>);
 }
 
 // 作品卡片的链接与「Agent 最新回复」条里的链接都以文档名作为可见文字——这是设计要的
@@ -100,7 +101,7 @@ describe("WorkbenchPage", () => {
 
   it("列表为空时给空态而不是伪造样例", async () => {
     const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: { documents: [] } }) });
-    render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><WorkbenchPage /></ClientProvider>);
 
     expect(await screen.findByText("还没有作品")).toBeInTheDocument();
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
@@ -111,7 +112,7 @@ describe("WorkbenchPage", () => {
       { documentId: "first", documentType: "dt-markdown", name: "文稿", versions: [], threads: [] },
       { documentId: "second", documentType: "dt-psd", name: "海报", versions: [], threads: [] },
     ] } }) });
-    render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><WorkbenchPage /></ClientProvider>);
     await within(grid()).findByRole("link", { name: /海报/ });
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "按类型筛选" }), "dt-psd");
     expect(within(grid()).getAllByRole("link")).toHaveLength(1);
@@ -130,7 +131,7 @@ describe("WorkbenchPage", () => {
       return inner(request);
     };
     const client = createTenantPortalClient({ tenantId: "t1", transport });
-    render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><WorkbenchPage /></ClientProvider>);
     expect(await screen.findByRole("alert")).toHaveTextContent("网络不通");
     expect(within(grid()).queryByRole("link")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "重新加载作品" }));
@@ -148,7 +149,7 @@ describe("WorkbenchPage", () => {
         ? { items: [documents.items[0]], nextCursor: "second-page" }
         : { items: [documents.items[1]], nextCursor: null };
     } };
-    render(<ClientProvider client={paginated}><WorkbenchPage /></ClientProvider>);
+    render(<ClientProvider client={paginated} draftScope={TEST_DRAFT_SCOPE}><WorkbenchPage /></ClientProvider>);
     await within(grid()).findByRole("link", { name: /UniDocs · 产品构想/ });
     expect(within(grid()).getAllByRole("link")).toHaveLength(2);
     expect(cursors).toEqual([undefined, "second-page"]);
@@ -191,7 +192,7 @@ function creationHarness(documentTypes: readonly PublicDocumentType[]) {
     return inner(request);
   };
   const client = createTenantPortalClient({ tenantId: "t1", transport });
-  render(<ClientProvider client={client}><WorkbenchPage /></ClientProvider>);
+  render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><WorkbenchPage /></ClientProvider>);
   return { store, creations, control };
 }
 
@@ -295,7 +296,7 @@ describe("WorkbenchPage 新建文档", () => {
     const transport: PlatformTransport = async (request) => request.path.endsWith("/document-types")
       ? { ok: false, error: { error: { code: "transport_failure", message: "offline", requestId: "r" } } }
       : inner(request);
-    render(<ClientProvider client={createTenantPortalClient({ tenantId: "t1", transport })}><WorkbenchPage /></ClientProvider>);
+    render(<ClientProvider client={createTenantPortalClient({ tenantId: "t1", transport })} draftScope={TEST_DRAFT_SCOPE}><WorkbenchPage /></ClientProvider>);
     const form = await openCreateForm();
 
     expect(await within(form).findByRole("alert")).toHaveTextContent("网络不通，请检查连接后重试。");

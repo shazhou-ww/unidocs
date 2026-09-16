@@ -16,6 +16,7 @@ import {
 } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
 import { DocumentPage } from "../src/pages/document.js";
+import { TEST_DRAFT_SCOPE } from "./draft-scope.js";
 
 function harness(seed: MemorySeed, documentId: string, threadId?: string) {
   const store = createMemoryStore(seed);
@@ -33,7 +34,7 @@ function harness(seed: MemorySeed, documentId: string, threadId?: string) {
   };
   const client = createTenantPortalClient({ tenantId: "t1", transport });
   const page = (id: string, thread?: string) => (
-    <ClientProvider client={client}><DocumentPage documentId={id} threadId={thread} /></ClientProvider>
+    <ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId={id} threadId={thread} /></ClientProvider>
   );
   const view = render(page(documentId, threadId));
   const reads = (suffix: string) =>

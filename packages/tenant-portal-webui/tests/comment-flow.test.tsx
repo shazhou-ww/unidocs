@@ -9,13 +9,14 @@ import {
 import { ClientProvider } from "../src/client-context.js";
 import { anchorKeyOf, createDraftStore } from "../src/drafts/draft-store.js";
 import { DocumentPage } from "../src/pages/document.js";
+import { TEST_DRAFT_SCOPE } from "./draft-scope.js";
 
 function setup(threadId?: string) {
   const store = createMemoryStore(sampleSeed());
   const agent = createScriptedAgent({ store });
   const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ store }) });
   const view = render(
-    <ClientProvider client={client}><DocumentPage documentId="doc-sample" threadId={threadId} /></ClientProvider>,
+    <ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" threadId={threadId} /></ClientProvider>,
   );
   return { store, agent, client, view };
 }
@@ -36,7 +37,7 @@ function seedOrphanedDraft(): { store: MemoryStore; client: ReturnType<typeof cr
     locationType: "unidocs.markdown.text-range/v1",
     payload: { start: 0, end: 3, quote: "abc" },
   };
-  createDraftStore(localStorage).save({
+  createDraftStore(localStorage, TEST_DRAFT_SCOPE).save({
     draftId: crypto.randomUUID(),
     documentId: "doc-sample",
     anchorKey: anchorKeyOf({ threadId: null, location }),
@@ -153,7 +154,7 @@ describe("评论流程", () => {
     await userEvent.click(within(discussion).getByRole("button", { name: "回复" }));
     await userEvent.type(within(discussion).getByRole("textbox", { name: "回复这一处" }), "留在这一处的草稿");
     await userEvent.click(within(discussion).getByRole("button", { name: "待回复的讨论 · 折叠" }));
-    view.rerender(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    view.rerender(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     const draft = await within(discussion).findByRole("note", { name: "未发送的评论" });
     expect(draft).toHaveTextContent("留在这一处的草稿");
     expect(draft.closest(".collapsed-drafts")).not.toBeNull();
@@ -225,7 +226,7 @@ describe("评论流程", () => {
         return inner(request);
       },
     });
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" threadId="th-open" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" threadId="th-open" /></ClientProvider>);
     const p = await panel();
 
     await userEvent.click(within(p).getByRole("button", { name: "回复" }));
@@ -253,7 +254,7 @@ describe("评论流程", () => {
         return inner(request);
       },
     });
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" threadId="th-open" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" threadId="th-open" /></ClientProvider>);
     const p = await panel();
 
     await userEvent.click(within(p).getByRole("button", { name: "回复" }));
@@ -281,7 +282,7 @@ describe("评论流程", () => {
   it("选区评论发送失败留下的草稿单独渲染成卡片，可以重试发送", async () => {
     const { store, client } = seedOrphanedDraft();
 
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     const p = await panel();
 
     expect(within(p).getByText("1 条未发送")).toBeInTheDocument();
@@ -301,7 +302,7 @@ describe("评论流程", () => {
   it("选区评论发送失败留下的草稿可以丢弃，丢弃后「N 条未发送」清零", async () => {
     const { client } = seedOrphanedDraft();
 
-    render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+    render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
     const p = await panel();
 
     const note = within(p).getByRole("note", { name: "未发送的评论" });
@@ -371,7 +372,7 @@ describe("评论流程", () => {
           return inner(request);
         },
       });
-      render(<ClientProvider client={client}><DocumentPage documentId="doc-sample" /></ClientProvider>);
+      render(<ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}><DocumentPage documentId="doc-sample" /></ClientProvider>);
       const p = await panel();
 
       await addCommentOnSelection("平台让人和外部");

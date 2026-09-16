@@ -9,11 +9,12 @@ import {
 } from "@unidocs/tenant-portal-client";
 import { ClientProvider } from "../src/client-context.js";
 import { DocumentPage } from "../src/pages/document.js";
+import { TEST_DRAFT_SCOPE } from "./draft-scope.js";
 
 function renderAt(threadId: string, commentIdx?: number) {
   const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
   return render(
-    <ClientProvider client={client}>
+    <ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}>
       <DocumentPage documentId="doc-sample" threadId={threadId} commentIdx={commentIdx} />
     </ClientProvider>,
   );
@@ -160,7 +161,7 @@ describe("分屏对照", () => {
     const client = createTenantPortalClient({ tenantId: "t1", transport });
 
     const { rerender } = render(
-      <ClientProvider client={client}>
+      <ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}>
         <DocumentPage documentId="doc-sample" threadId="th-stale-present" />
       </ClientProvider>,
     );
@@ -173,7 +174,7 @@ describe("分屏对照", () => {
     // 所以下面的断言可以放心用 waitFor 等到底，而不用去猜某个精确的微任务时刻。
     freeze();
     rerender(
-      <ClientProvider client={client}>
+      <ClientProvider client={client} draftScope={TEST_DRAFT_SCOPE}>
         <DocumentPage documentId="doc-sample" threadId="th-open" />
       </ClientProvider>,
     );

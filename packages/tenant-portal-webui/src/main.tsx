@@ -46,7 +46,7 @@ async function bootstrap(): Promise<void> {
       tenantId: "t1",
       transport: createMemoryTransport({ seed: sampleSeed(), agent: { autoRun: true } }),
     });
-    root.render(<StrictMode><App client={client} /></StrictMode>);
+    root.render(<StrictMode><App client={client} draftScope={{ tenantId: "t1", principalId: "fixture" }} /></StrictMode>);
     return;
   }
 
@@ -75,7 +75,15 @@ async function bootstrap(): Promise<void> {
         .then(() => renderSignedOutNotice())
         .catch(renderConnectionFailureNotice);
     };
-    root.render(<StrictMode><App client={client} onSignOut={onSignOut} /></StrictMode>);
+    root.render(
+      <StrictMode>
+        <App
+          client={client}
+          draftScope={{ tenantId: session.tenantId, principalId: session.principalId }}
+          onSignOut={onSignOut}
+        />
+      </StrictMode>,
+    );
   } catch (error) {
     renderConnectionFailureNotice(error);
   }

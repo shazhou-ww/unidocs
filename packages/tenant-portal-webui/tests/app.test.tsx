@@ -2,10 +2,11 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../src/app.js";
 import { createTenantPortalClient, createMemoryTransport, sampleSeed } from "@unidocs/tenant-portal-client";
+import { TEST_DRAFT_SCOPE } from "./draft-scope.js";
 
 function renderApp() {
   const client = createTenantPortalClient({ tenantId: "t1", transport: createMemoryTransport({ seed: sampleSeed() }) });
-  return render(<App client={client} />);
+  return render(<App client={client} draftScope={TEST_DRAFT_SCOPE} />);
 }
 
 describe("App", () => {

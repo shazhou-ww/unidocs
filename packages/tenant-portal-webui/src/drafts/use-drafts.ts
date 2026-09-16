@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { useDraftScope } from "../client-context.js";
 import { anchorKeyOf, createDraftStore, type Draft } from "./draft-store.js";
 
 export interface DraftsApi {
@@ -21,7 +22,11 @@ function newId(): string {
 }
 
 export function useDrafts(documentId: string): DraftsApi {
-  const store = useMemo(() => createDraftStore(globalThis.localStorage), []);
+  const scope = useDraftScope();
+  const store = useMemo(
+    () => createDraftStore(globalThis.localStorage, scope),
+    [scope.tenantId, scope.principalId],
+  );
   const [epoch, setEpoch] = useState(0);
 
   const drafts = useMemo(
