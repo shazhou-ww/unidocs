@@ -146,24 +146,53 @@
   .doc-workspace.compare .pane-base { border-right: 0; border-bottom: 1px solid var(--line); }
 }
 
-/* ── 未登录整页 ─────────────────────────────────────────────────────
- * 复用外壳左上角的构图（印章字标 + 绿点工作区行），左对齐在一个 340px
- * 的 measure 里，整块视觉居中。刻意不做居中卡片：这个界面里有边框有圆角
- * 的容器是文档本身，chrome 不是。
+/* ── 未登录整页（照 docs/design 登录页稿）─────────────────────────────
+ * 左 640px 表单栏 + 右侧说明栏；窄屏收起说明栏。色值与控件尺寸沿用
+ * mock 的 token，稿子里独有的几个（说明栏底色、待回复徽章）在此登记。
  */
 
-.sign-in { min-height: 100dvh; display: grid; place-items: center; padding: 32px 20px; }
-.sign-in-block { width: min(340px, 100%); animation: arrive .3s ease both; }
-.sign-in .brand { padding: 0; }
-.sign-in .workspace { margin: 14px 0 30px; }
+.sign-in { display: flex; min-height: 100dvh; background: var(--bg); }
 
-.sign-in h1 { margin: 0; font-size: 21px; font-weight: 550; line-height: 1.7; overflow-wrap: anywhere; }
-.sign-in-lede { margin: 6px 0 0; color: var(--muted); }
+.sign-in-form { flex: 0 0 640px; display: flex; flex-direction: column; padding: 42px 72px 34px; border-right: 1px solid var(--line); }
+.sign-in-brand { padding: 0; }
+.sign-in-body { margin: auto 0; padding: 40px 0; width: 100%; max-width: 392px; }
 
-.sign-in-action { margin-top: 26px; width: 100%; }
+.sign-in-body h1 { margin: 0 0 10px; font-size: 28px; font-weight: 550; }
+.sign-in-lede { margin: 0 0 30px; font-size: 12px; line-height: 1.85; color: var(--muted); }
 
-.sign-in-outcome { display: flex; align-items: flex-start; gap: 8px; margin: 26px 0 0; padding-top: 18px; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.sign-in-provider { display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; min-height: 42px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: #3f4239; }
+.sign-in-provider:hover { background: var(--soft); border-color: #cdd0c8; }
+.sign-in-provider-mark { width: 17px; height: 17px; flex-shrink: 0; }
+
+.sign-in-note { margin: 22px 0 0; font-size: 11px; line-height: 1.85; color: var(--muted); }
+
+.sign-in-outcome { display: flex; align-items: flex-start; gap: 8px; margin: 18px 0 0; overflow-wrap: anywhere; }
 .sign-in-dot { width: 6px; height: 6px; margin-top: 6px; flex-shrink: 0; border-radius: 50%; }
 .sign-in-dot-refused { background: var(--red); }
 .sign-in-dot-idle { background: var(--muted); }
 .sign-in-request { display: block; margin-top: 4px; font-size: 11px; color: var(--muted); user-select: all; }
+
+.sign-in-pitch { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 30px; padding: 64px 72px; background: #f5f6f2; }
+.sign-in-pitch .workspace { margin: 0 0 12px; }
+.sign-in-pitch-lede { margin: 0; max-width: 440px; font-size: 20px; font-weight: 450; line-height: 1.75; text-wrap: pretty; }
+
+.sign-in-samples { display: flex; flex-direction: column; gap: 12px; max-width: 470px; }
+.sign-in-sample { padding: 15px 17px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
+.sign-in-sample p { margin: 0; font-size: 11px; line-height: 1.75; color: var(--muted); }
+.sign-in-sample-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.sign-in-sample-head strong { font-size: 13px; font-weight: 550; }
+
+.sign-in-type { padding: 2px 6px; border: 1px solid #cbdac0; border-radius: 3px; background: #edf2e8; color: #45613b; font-size: 10px; font-weight: 700; }
+.sign-in-pending { margin-left: auto; padding: 2px 7px; border-radius: 3px; background: #f6f1df; color: #8d742e; font-size: 10px; }
+
+.sign-in-sample-agent { border-color: #e2e8de; background: #f7f9f6; }
+.sign-in-sample-agent p { color: #6d7565; }
+.sign-in-sample-agent strong { font-size: 12px; }
+.sign-in-agent-mark { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 5px; background: #ecf0ed; color: var(--green); }
+.sign-in-version { margin-left: auto; padding: 2px 6px; border-radius: 3px; background: #ecf0ed; color: var(--green); font-size: 10px; }
+
+@media (max-width: 1000px) {
+  .sign-in-pitch { display: none; }
+  .sign-in-form { flex: 1; align-items: center; padding: 42px 24px 34px; border-right: 0; }
+  .sign-in-brand { align-self: flex-start; }
+}
