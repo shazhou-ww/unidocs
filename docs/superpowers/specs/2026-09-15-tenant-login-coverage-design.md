@@ -374,9 +374,9 @@ VALUES ('member-local-dev', 't-local', 'user-local', 'dev@unidocs.local', 'local
 ON CONFLICT (member_id) DO UPDATE SET active = 1, updated_at = excluded.updated_at
 ```
 
-使开发会话通过 4.2 的成员校验。`t-local` 与
-`stacks/unidocs-cloudflare/local/runtime.mjs` 的 `LOCAL_AGENT_TENANT_ID` 一致，
-本地 Operator 回路因此照常工作。开发会话**不写审计**。
+使开发会话通过 4.2 的成员校验。本地 Operator 回路因此照常工作
+（2026-09-16 起 Agent 承载者的租户从请求路径读取，不再需要与某个配置常量
+一致，见 §9.2）。开发会话**不写审计**。
 
 **已知行为**：开关打开时「退出」只结束当前会话并清掉 cookie；WebUI 下一次探测
 会话时请求不带 cookie，会立刻得到新的开发会话。要在本地测试真实登录与退出，
@@ -498,8 +498,9 @@ Cloudflare 以更具体的路由优先，这三条从 gateway 的 catch-all 中�
 
 **数据面配置**（§1.2 第 3 条）。本轮上线的前提是租户数据面在生产可用：
 
-- `vars` 增加 `AGENT_TENANT_ID`（等于首个上线租户的 id）与 `CAS_ORIGIN`、
-  `CAS_STACK_ID`、`CAS_ISSUER`、`CAS_AUDIENCE`、`CAS_REF_DOMAIN`、`CAS_SIGNING_KID`；
+- ~~`vars` 增加 `AGENT_TENANT_ID`（等于首个上线租户的 id）与~~ `vars` 增加
+  `CAS_ORIGIN`、`CAS_STACK_ID`、`CAS_ISSUER`、`CAS_AUDIENCE`、`CAS_REF_DOMAIN`、
+  `CAS_SIGNING_KID`（2026-09-16 起不再需要 `AGENT_TENANT_ID`，见 §9.2）；
 - `secrets.required` 增加 `AGENT_API_TOKEN` 与 `CAS_SIGNING_KEY`；
 - 生产 markdown worker（`packages/cloudflare-markdown/wrangler.toml` 注释写明 v0 故意
   未部署这些）补齐 Operator 回路：`PLATFORM_SERVICE` service binding 指向
@@ -507,8 +508,11 @@ Cloudflare 以更具体的路由优先，这三条从 gateway 的 catch-all 中�
   `AGENT_API_TOKEN` 同值）与 `OPERATOR_CAS_*`（Operator 以 Agent 身份写快照的
   UniCAS 凭据）。
 
-因为 `AGENT_TENANT_ID` 只有一个，本轮生产**只开一个租户**；Operator 只为这个租户
-工作。多租户与 Agent 凭据改造一起做，不在本轮。
+~~因为 `AGENT_TENANT_ID` 只有一个，本轮生产**只开一个租户**；Operator 只为这个
+租户工作。多租户与 Agent 凭据改造一起做，不在本轮。~~
+**2026-09-16 起不再成立**：Agent 承载者的租户改为从请求路径读取，
+`AGENT_TENANT_ID` 已整体删除，Operator 对生产开出的每一个租户都能工作，
+不再受限于「本轮只开一个」，见 §9.2。
 
 **注释。** `worker.ts:248-250` 那段注释改写而不是删除：`/` 在生产上仍归 gateway，
 「根路径跳转只在本地生效」的结论依然成立，只是理由从「生产只路由 admin、MCP 与
@@ -680,6 +684,7 @@ OAuth 路径」改为「生产不路由 `/`」。`serveTenantWebUi` 前的注释
 | 默认关闭开关改变本地开发习惯 | seed 自动加成员；`.dev.vars.example` 与部署文档写明 |
 | 每请求多一次 JOIN | 走会话主键与 `(tenant_id, principal_id)` 索引 |
 | 登录 begin 是匿名写 D1 的端点，可被刷 | 事务表以「10 分钟内的 begin 数」为上限（4.3 清理）；admin 的 `/admin/auth/login` 同样如此。需要时在 Cloudflare 上对两个 begin 路径加限流规则，不在本轮代码范围 |
+| **2026-09-16 新增：** 自助开户把 callback（同样匿名可达，只是多一次真实 Google 往返）从「认领邀请」变成「创建永久的租户与成员行」，而 remove 不再是封禁（§9.1）——同一个人被拒绝重新自助开户的唯一方式在本轮不存在，理论上可以反复走完整的 Google 登录流程来堆积空租户。这是产品决定「自助开户」的已接受后果，不是要重新讨论要不要做自助开户；缓解手段与 begin 一样是 Cloudflare 侧限流，不在本轮代码范围 |
 | 会话 cookie 被盗 | 固定 8 小时有效期；管理员可 `revokeSessions`；每成员至多 10 条会话 |
 | 将来开放直连 UniCAS capability 后，停用成员的 JWT 在有效期内仍可用 | v0 不签发（固定 503）；开放签发的设计须声明该窗口 |
 | ~~本轮生产只支持一个租户~~（2026-09-16 起不再成立，见 §9） | ~~由单一 `AGENT_TENANT_ID` 决定，已写入 §4.7；多租户与 Agent 凭据改造一并做~~ |
@@ -786,7 +791,11 @@ added_by     = 'self-signup'
 管理员主动 `add` 回同一个（或另一个）租户时换新 principal；这里说的是完全
 不经过 `add`，自助登录本身就会开一个新租户。本轮没有设计「全局封禁」这一
 能力（例如按 email 或 `(issuer, subject)` 拉黑，阻止其触发自助开户）；这是
-已知的空白，留给以后有实际需要时再设计，不是遗漏。
+已知的空白，留给以后有实际需要时再设计，不是遗漏。同一条「活跃 email 全局
+唯一」索引是这两件事背后共同的裁判：它既是「被 remove 的人重新登录会拿到
+新租户而不是复活旧的」的原因，也是「已经自助登录过的人不能再被 `add` 进
+另一个租户，除非先 `remove`」的原因——`add` 与自助开户在同一个 email 上
+永远互斥，谁先发生，另一条路径就会被这条唯一索引挡下。
 
 ### 9.2 Agent 凭据：共享 token，作用域从一个租户扩大到全部
 

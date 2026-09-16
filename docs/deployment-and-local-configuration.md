@@ -417,9 +417,15 @@ tenant.
 
 An administrator can still invite a specific email into an existing tenant
 through `POST /admin/api/v1/tenant-members` — that account then joins the
-invited tenant on its next sign-in instead of getting a new one. This is
-useful for putting several people into one shared tenant; it is no longer
-required for anyone to be able to sign in at all.
+invited tenant on its next sign-in instead of getting a new one, **but only
+if that email has never signed in before**. Self-service means anyone who
+has already signed in once already holds an active membership, and the same
+email can only be an active member once (one active row per email); `add`
+refuses it with `tenant_member_exists` (409). To move an existing, already
+signed-in account into a different tenant, `remove` its current membership
+first, then `add` it to the target tenant. This is useful for putting several
+people into one shared tenant; it is no longer required for anyone to be able
+to sign in at all.
 
 ### Tenant console go-live in production
 

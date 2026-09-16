@@ -81,7 +81,7 @@ describe("D1TenantLoginRepository.completeLogin", () => {
     ]);
   });
 
-  it("provisions two different identities into two different tenants, each seeing only their own", async () => {
+  it("provisions two different identities into two different tenants, with distinct tenant ids on their sessions", async () => {
     const first = await repository.completeLogin(identity("subject-a", "a@example.com"), "req-a");
     const second = await repository.completeLogin(identity("subject-b", "b@example.com"), "req-b");
     expect(first.tenantId).not.toBe(second.tenantId);
@@ -143,8 +143,17 @@ describe("D1TenantLoginRepository.completeLogin", () => {
     }), () => NOW);
     await expect(racing.completeLogin(identity(), "req-loser")).rejects.toBeDefined();
     expect(await rows("SELECT COUNT(*) AS n FROM portal_tenant_members")).toEqual([{ n: 1 }]);
+    expect(await rows("SELECT COUNT(*) AS n FROM portal_tenant_sessions")).toEqual([{ n: 1 }]);
     expect(await rows("SELECT request_id FROM portal_tenant_auth_audit WHERE action = 'session.created'")).toEqual([{ request_id: "req-winner" }]);
     expect(await rows("SELECT request_id FROM portal_tenant_auth_audit WHERE action = 'member.bound'")).toEqual([{ request_id: "req-winner" }]);
+  });
+
+  it("refuses an identity whose email is already an active member under a different Google identity", async () => {
+    await insertMember(real.db, { tenantId: "t-held", principalId: "user:holder", email: "shared@example.com", memberId: "member-holder" });
+    await expect(repository.completeLogin(identity("a-different-subject", "shared@example.com"), "req-1")).rejects.toEqual(new AdminAccessError("forbidden"));
+    expect(await rows("SELECT COUNT(*) AS n FROM portal_tenant_members")).toEqual([{ n: 1 }]);
+    expect(await rows("SELECT * FROM portal_tenant_sessions")).toEqual([]);
+    expect(await rows("SELECT * FROM portal_tenant_auth_audit")).toEqual([]);
   });
 
   it("keeps at most ten sessions per member, dropping the oldest and every expired one", async () => {

@@ -69,8 +69,11 @@ export function createTenantLoginHttp(options: {
         return backToConsole("failed", requestId, callback);
       }
       if (error instanceof AdminAccessError) {
-        // begin refuses a bad returnTo or an unexpected discovery document; the
-        // callback's forbidden is "not on the member list".
+        // begin refuses a bad returnTo or an unexpected discovery document.
+        // The callback's forbidden no longer means "not on the member list"
+        // (self-service provisions anyone new a tenant): it means either the
+        // confirmation predates the invitation being claimed, or the email
+        // is already an active member under a *different* Google identity.
         if (!callback) console.warn(JSON.stringify({ event: "tenant_google_login_failed", requestId, stage: "begin", reason: "validation_failed" }));
         return backToConsole(callback && error.code === "forbidden" ? "denied" : "failed", requestId, callback);
       }

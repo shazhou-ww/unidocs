@@ -132,7 +132,26 @@ export class D1TenantLoginRepository {
       issued.statement,
       audit("session.created"),
     );
-    await this.db.batch(statements);
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      // Distinguishes one coded failure from every other batch failure, the
+      // way tenant-members-repository.ts's `add` does for its own equivalent
+      // conflict: an email already an active member under a *different*
+      // Google identity throws here as a plain (uncoded) unique-index
+      // violation on provisioning's INSERT — this identity is not who holds
+      // that email, so it is a login refusal (`login=denied`), not a
+      // transient failure (`login=failed`). A genuine race between two
+      // sign-ins for the *same* identity must still surface as that plain D1
+      // error (a retry then simply succeeds against the row the winner
+      // wrote): the re-check below only matches a *different* subject, so it
+      // does not fire for that case.
+      const heldByAnother = await this.db.prepare(
+        "SELECT 1 FROM portal_tenant_members WHERE email = ? AND active = 1 AND subject <> ?",
+      ).bind(verified.email, verified.subject).first();
+      if (heldByAnother) throw new AdminAccessError("forbidden");
+      throw error;
+    }
     return { memberId: member.member_id, tenantId: member.tenant_id, principalId: member.principal_id, token: issued.token, csrfToken: issued.csrfToken };
   }
 }

@@ -37,10 +37,10 @@
     // configured: AGENT_API_TOKEN and the CAS_* vars/secret below are not
     // set in this file, and the D1 migrations for portal_tenant_members etc.
     // must be applied first. Deploying routes ahead of that lets a user sign
-    // in and create a document, but the
-    // Operator submission is refused 401 and every snapshot read comes back
-    // unavailable. Follow the ordered go-live steps under "Tenant console
-    // go-live in production" in docs/deployment-and-local-configuration.md.
+    // in and create a document, but the Operator submission is refused 401
+    // and every snapshot read comes back unavailable. Follow the ordered
+    // go-live steps under "Tenant console go-live in production" in
+    // docs/deployment-and-local-configuration.md.
     {
       "pattern": "unidocs.shazhou.work/portal",
       "zone_name": "shazhou.work"
