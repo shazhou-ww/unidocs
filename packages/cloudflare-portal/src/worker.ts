@@ -6,6 +6,8 @@ import { D1DocumentTypeRepository } from "./document-types-repository.js";
 import { serveAdminWebUi, serveTenantWebUi } from "./static-assets.js";
 import { createAdministratorsHttp } from "./administrators-http.js";
 import { D1AdministratorRepository } from "./administrators-repository.js";
+import { createTenantMembersHttp } from "./tenant-members-http.js";
+import { D1TenantMemberRepository } from "./tenant-members-repository.js";
 import { createAuditEventsHttp } from "./audit-events-http.js";
 import { D1AuditEventRepository } from "./audit-events-repository.js";
 import { createDocumentContractsHttp } from "./document-contracts-http.js";
@@ -323,12 +325,14 @@ export default {
         return createOperatorValidationsHttp(new D1OperatorValidationRepository(env.DB), operatorTarget.transport, operatorTarget.keys)(apiRequest, admin, requestId);
       };
       const operatorsHttp = createOperatorsHttp(new D1OperatorRepository(env.DB));
+      const tenantMembersHttp = createTenantMembersHttp(new D1TenantMemberRepository(env.DB));
       const response = await createPortalBff(config, repository, {
         bootstrapEmail: env.PORTAL_BOOTSTRAP_EMAIL || null,
         bundleOrigin: env.BUNDLE_ORIGIN,
         adminApi: (apiRequest, admin, requestId) => {
           const path = new URL(apiRequest.url).pathname;
           if (path.startsWith("/admin/api/v1/administrators")) return administratorsHttp(apiRequest, admin, requestId);
+          if (path.startsWith("/admin/api/v1/tenant-members")) return tenantMembersHttp(apiRequest, admin, requestId);
           if (path === "/admin/api/v1/audit-events") return auditEventsHttp(apiRequest, admin, requestId);
           if (path.includes("/document-contracts")) return documentContractsHttp(apiRequest, admin, requestId);
           if (path.startsWith("/admin/api/v1/type-card-bundles")) return typeCardBundlesHttp(apiRequest, admin, requestId);
