@@ -1,7 +1,8 @@
 // Migrate unidocs-cas -> unidocs-cas-apac via the Cloudflare v4 object API.
 // Usage: node scripts/r2-migrate-copy.mjs [--dry-run] [--limit N]
 const ACCOUNT = "92c3c4fdcc84a1590555bccf4f111de2";
-const TOKEN = "cfut_cxisKZNX0cO1jTo6k2KDvvoiC3SMuazKxDyHUA9V96291083";
+const TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+if (!TOKEN) throw new Error("CLOUDFLARE_API_TOKEN is required");
 const SRC = "unidocs-cas";
 const DST = "unidocs-cas-apac";
 const SKIP_PREFIX = "bench/";
